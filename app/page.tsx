@@ -2,283 +2,418 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import GlobeView from '@/components/GlobeView';
-import TopBar from '@/components/TopBar';
-import FiltersBar, { FilterType } from '@/components/FiltersBar';
 import AttackTable from '@/components/AttackTable';
-import AttackDetail from '@/components/AttackDetail';
+import IPIntelPanel from '@/components/IPIntelPanel';
+import MLPanel from '@/components/MLPanel';
+import MITREPanel from '@/components/MITREPanel';
+import FeatureImportancePanel from '@/components/FeatureImportancePanel';
+import KPICards from '@/components/KPICards';
+import ConnectionStatusBar from '@/components/ConnectionStatus';
+import KeyboardShortcuts from '@/components/KeyboardShortcuts';
 import ThreatIntelFeed from '@/components/ThreatIntelFeed';
-import { useWebSocket } from '@/hooks/useWebSocket';
+import { useAttackStream } from '@/hooks/useAttackStream';
+import { useModelMetrics } from '@/hooks/useModelMetrics';
 import { useThreatIntel } from '@/hooks/useThreatIntel';
 import { AttackEvent } from '@/types/attack';
-import { ChevronDown, ChevronUp, Cpu, Database, Network, Activity, Globe2, Target } from 'lucide-react';
+import {
+  ShieldAlert, ChevronLeft, ChevronRight, Sun, Moon, Download, Maximize2,
+  HelpCircle, Radio,
+} from 'lucide-react';
 
+type FilterType = 'ALL' | 'SYN' | 'UDP' | 'HTTP';
+type ActiveTab = 'LIVE' | 'ANALYTICS';
+
+// ── Ticker wrapper ───────────────────────────────────────────────────────────
+function Ticker({ attacks, news, isPaused }: {
+  attacks: AttackEvent[];
+  news: { title: string; source: string }[];
+  isPaused: boolean;
+}) {
+  return (
+    <div className="w-full flex flex-col shrink-0">
+      {/* Primary attack ticker */}
+      <div className="w-full bg-[#ff3b3b]/8 border-b border-[#ff3b3b]/15 text-[#ff3b3b] py-1.5 text-[10px] uppercase tracking-widest font-mono flex items-center overflow-hidden shrink-0">
+        <div className="font-bold px-3 border-r border-[#ff3b3b]/25 flex items-center gap-2 shrink-0 bg-[#080d14]/90 z-10 shadow-[8px_0_12px_rgba(8,13,20,1)]">
+          <span className={`w-2 h-2 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-[#ff3b3b] animate-ping-glow'}`} />
+          {isPaused ? 'PAUSED' : 'LIVE FEED'}
+        </div>
+        <div className="overflow-hidden flex-1">
+          <div className="flex whitespace-nowrap min-w-max" style={{ animation: 'ticker 50s linear infinite' }}>
+            {[1, 2].map(iter => (
+              <React.Fragment key={iter}>
+                {attacks.length > 0
+                  ? attacks.slice(0, 12).map(a => (
+                    <span key={`${a.id}-${iter}`}>
+                      {a.attack_type} FLOOD: {a.source_country} → {a.target_country} ({a.packets_per_sec.toLocaleString()} pkt/s · SEV {a.severity})
+                      <span className="mx-6 opacity-30">|</span>
+                    </span>
+                  ))
+                  : <span>ANALYZING NETWORK FLOW SIGNATURES<span className="mx-6 opacity-30">|</span></span>
+                }
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Intel ticker */}
+      <div className="w-full bg-[#ff8c00]/5 border-b border-[#ff8c00]/10 text-[#ff8c00]/80 py-1 text-[9px] uppercase tracking-widest font-mono flex items-center overflow-hidden shrink-0">
+        <div className="font-bold px-3 border-r border-[#ff8c00]/15 flex items-center gap-2 shrink-0 bg-[#080d14]/90 z-10 shadow-[8px_0_12px_rgba(8,13,20,1)]">
+          <Radio size={9} /> INTEL
+        </div>
+        <div className="overflow-hidden flex-1">
+          <div className="flex whitespace-nowrap min-w-max" style={{ animation: 'ticker 80s linear infinite' }}>
+            {[1, 2].map(iter => (
+              <React.Fragment key={iter}>
+                {news.length > 0
+                  ? news.map((item, idx) => (
+                    <span key={`${idx}-${iter}`}>
+                      <span className="text-gray-400">[{item.source}]</span> {item.title}
+                      <span className="mx-6 opacity-30">|</span>
+                    </span>
+                  ))
+                  : <span>SYNCING INTEL FEEDS...<span className="mx-6 opacity-30">|</span></span>
+                }
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Attack type distribution bar ─────────────────────────────────────────────
+function TypeBar({ stats }: { stats: { SYN: number; UDP: number; HTTP: number } }) {
+  const { SYN, UDP, HTTP } = stats;
+  return (
+    <div className="px-3 py-2 border-b border-white/5 shrink-0">
+      <div className="flex justify-between text-[9px] text-gray-500 font-mono tracking-widest mb-1.5">
+        <span className="text-[#ff3b3b]">SYN {SYN}%</span>
+        <span className="text-[#ff8c00]">UDP {UDP}%</span>
+        <span className="text-[#ffd700]">HTTP {HTTP}%</span>
+      </div>
+      <div className="h-1.5 rounded-full flex overflow-hidden">
+        <div className="h-full bg-[#ff3b3b] transition-all duration-1000" style={{ width: `${SYN}%` }} />
+        <div className="h-full bg-[#ff8c00] transition-all duration-1000" style={{ width: `${UDP}%` }} />
+        <div className="h-full bg-[#ffd700] transition-all duration-1000" style={{ width: `${HTTP}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Export helper ─────────────────────────────────────────────────────────────
+function exportData(attacks: AttackEvent[], format: 'csv' | 'json') {
+  let content: string;
+  let filename: string;
+  let type: string;
+
+  if (format === 'json') {
+    content = JSON.stringify(attacks, null, 2);
+    filename = `threatmapx-attacks-${Date.now()}.json`;
+    type = 'application/json';
+  } else {
+    const headers = ['id', 'timestamp', 'source_ip', 'source_country', 'target_ip', 'target_country', 'attack_type', 'packets_per_sec', 'severity', 'confidence', 'mitre_id'];
+    const rows = attacks.map(a => {
+      const rec = a as unknown as Record<string, unknown>;
+      return headers.map(h => JSON.stringify(rec[h] ?? '')).join(',');
+    });
+    content = [headers.join(','), ...rows].join('\n');
+    filename = `threatmapx-attacks-${Date.now()}.csv`;
+    type = 'text/csv';
+  }
+
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Home() {
-  const { attacks, isConnected, togglePause, isPaused } = useWebSocket('ws://localhost:8080');
+  const { attacks, isConnected, connectionStatus, stats, isPaused, togglePause } = useAttackStream();
+  const { metrics } = useModelMetrics(30_000);
   const { news, loading: newsLoading } = useThreatIntel();
+
   const [activeFilter, setActiveFilter] = useState<FilterType>('ALL');
   const [selectedAttack, setSelectedAttack] = useState<AttackEvent | null>(null);
-  const [isMlExpanded, setIsMlExpanded] = useState(false);
-  
-  // Solves hydration mismatch
-  const [sessionStart, setSessionStart] = useState('');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('LIVE');
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [sessionStart] = useState(() => Date.now());
+  const [sessionStartStr, setSessionStartStr] = useState('');
+  const [uptime, setUptime] = useState(0);
+
+  // Hydration fix
   useEffect(() => {
-    setSessionStart(new Date().toLocaleTimeString('en-IN', {
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
-    }));
+    setSessionStartStr(new Date().toLocaleTimeString('en-IN'));
   }, []);
 
+  // Uptime counter
+  useEffect(() => {
+    const t = setInterval(() => setUptime(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Events/sec rolling
+  const eventsPerSec = useMemo(() => {
+    const secs = Math.max(1, (Date.now() - sessionStart) / 1000);
+    return attacks.length / secs;
+  }, [attacks.length, sessionStart]);
+
+  // Filter attacks
   const visibleAttacks = useMemo(() => {
     if (activeFilter === 'ALL') return attacks;
-    return attacks.filter(a => a.attackType === activeFilter);
+    return attacks.filter(a => a.attack_type === activeFilter);
   }, [attacks, activeFilter]);
 
-  const threatScore = useMemo(() => {
-    const now = Date.now();
-    const recent = attacks.filter(a => (now - new Date(a.timestamp).getTime()) < 60000);
-    const sum = recent.reduce((acc, curr) => acc + curr.intensity, 0);
-    return Math.min(100, (sum / 6) * 100); 
-  }, [attacks]);
-
+  // Browser push notification for severity > 85
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === 'INPUT') return;
+    const latestHigh = attacks[0];
+    if (!latestHigh || latestHigh.severity <= 85) return;
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted') {
+      new Notification('ThreatMapX — Critical Attack', {
+        body: `${latestHigh.attack_type} flood from ${latestHigh.source_country} · Severity ${latestHigh.severity}`,
+      });
+    }
+  }, [attacks[0]?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-      switch(e.key.toLowerCase()) {
+  // Request notification permission once
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((document.activeElement as HTMLElement)?.tagName === 'INPUT') return;
+      switch (e.key.toLowerCase()) {
         case 's': setActiveFilter('SYN'); break;
         case 'u': setActiveFilter('UDP'); break;
         case 'h': setActiveFilter('HTTP'); break;
         case 'a': setActiveFilter('ALL'); break;
-        case 'escape': setSelectedAttack(null); break;
-        case ' ': 
+        case ' ':
           e.preventDefault();
-          togglePause(); 
+          togglePause();
+          break;
+        case 'f':
+          setLeftCollapsed(true);
+          setRightCollapsed(true);
+          break;
+        case 't':
+          setIsDarkMode(d => !d);
+          break;
+        case '?':
+          setShowShortcuts(s => !s);
+          break;
+        case 'escape':
+          setSelectedAttack(null);
+          setShowShortcuts(false);
           break;
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, [togglePause]);
 
-  const stats = useMemo(() => {
-    const now = Date.now();
-    const lastMin = attacks.filter(a => (now - new Date(a.timestamp).getTime()) < 60000);
-    const sources: Record<string, number> = {};
-    const targets: Record<string, number> = {};
-    let peak = 0;
-    let syn = 0, udp = 0, http = 0;
-    
-    attacks.forEach(a => {
-      sources[a.srcCountry] = (sources[a.srcCountry] || 0) + 1;
-      targets[a.dstCountry] = (targets[a.dstCountry] || 0) + 1;
-      if (a.intensity > peak) peak = a.intensity;
-      if (a.attackType === 'SYN') syn++;
-      if (a.attackType === 'UDP') udp++;
-      if (a.attackType === 'HTTP') http++;
-    });
-
-    const topSrc = Object.entries(sources).sort((a,b) => b[1] - a[1])[0] || ['Unknown'];
-    const topDst = Object.entries(targets).sort((a,b) => b[1] - a[1])[0] || ['Unknown'];
-    const total = syn + udp + http || 1; 
-    
-    return {
-      attacksPerMin: lastMin.length,
-      topSource: topSrc[0],
-      topTarget: topDst[0],
-      peakIntensity: peak,
-      breakdown: {
-        syn: (syn / total) * 100,
-        udp: (udp / total) * 100,
-        http: (http / total) * 100
-      },
-      uniqueCountries: new Set([...Object.keys(sources), ...Object.keys(targets)]).size
-    };
-  }, [attacks]);
-
-  const getFlag = (c: string) => {
-    const f: any = { 'China': '🇨🇳', 'United States': '🇺🇸', 'Russia': '🇷🇺', 'Brazil': '🇧🇷', 'India': '🇮🇳', 'Germany': '🇩🇪', 'Japan': '🇯🇵', 'United Kingdom': '🇬🇧' };
-    return f[c] || '🌐';
+  const typeBreakdown = {
+    SYN: stats.type_breakdown['SYN'] ?? 0,
+    UDP: stats.type_breakdown['UDP'] ?? 0,
+    HTTP: stats.type_breakdown['HTTP'] ?? 0,
   };
 
   return (
-    <div className="flex h-screen w-full bg-[#05060a] overflow-hidden flex-col font-sans">
-      
-      {/* 🔴 CONTINUOUS SEAMLESS TICKER BARS CONT. */}
-      <div className="w-full flex flex-col shrink-0">
-        
-        {/* Primary Attack Ticker */}
-        <div className="w-full bg-red-950/40 border-b border-red-500/20 text-red-500 py-1.5 text-[10px] uppercase tracking-widest font-mono flex items-center overflow-hidden shrink-0">
-          <div className="font-bold px-4 border-r border-red-500/30 flex items-center gap-2 shrink-0 bg-[#05060a]/80 z-10 shadow-[10px_0_10px_rgba(5,6,10,1)]">
-            <span className={`w-2 h-2 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-ping-glow'}`}></span>
-            {isPaused ? 'STREAM PAUSED' : 'LIVE FEED'}
-          </div>
-          <div className="overflow-hidden flex-1 relative flex">
-            <div className="flex whitespace-nowrap min-w-max" style={{animation: 'ticker 50s linear infinite'}}>
-              {[1, 2].map((iter) => (
-                <React.Fragment key={iter}>
-                  {attacks.length > 0 ? attacks.slice(0,10).map(atk => (
-                    <span key={atk.id + '-' + iter}>
-                      {atk.attackType} FLOOD detected: {atk.srcCountry} → {atk.dstCountry} ({(atk.packetsPerSec).toLocaleString()} pkt/s)
-                      <span className="mx-8 opacity-40">|</span>
-                    </span>
-                  )) : (
-                    <span>ANALYZING NETWORK FLOW SIGNATURES<span className="mx-8 opacity-40">|</span></span>
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
+    <div className={`flex h-screen w-full overflow-hidden flex-col ${isDarkMode ? 'dark' : 'light'}`} style={{ background: 'var(--bg-primary)' }}>
+      {/* ── Header ── */}
+      <header className="flex items-center justify-between px-4 py-2 border-b border-white/8 bg-[#080d14]/80 backdrop-blur-md shrink-0 z-30">
+        <div className="flex items-center gap-3">
+          <ShieldAlert size={18} className="text-[#ff3b3b]" />
+          <div>
+            <h1 className="text-sm font-bold text-white tracking-widest leading-none">ThreatMapX</h1>
+            <p className="text-[9px] text-gray-500 tracking-widest">Real-time DDoS Detection & SOC Visualization</p>
           </div>
         </div>
 
-        {/* Secondary Intel Ticker */}
-        <div className="w-full bg-orange-950/20 border-b border-orange-500/10 text-orange-400 py-1 text-[9px] uppercase tracking-widest font-mono flex items-center overflow-hidden shrink-0">
-          <div className="font-bold px-4 border-r border-orange-500/20 flex items-center gap-2 shrink-0 bg-[#05060a]/90 z-10 shadow-[10px_0_10px_rgba(5,6,10,1)] text-orange-500">
-            📰 INTEL
-          </div>
-          <div className="overflow-hidden flex-1 relative flex">
-            <div className="flex whitespace-nowrap min-w-max" style={{animation: 'ticker 80s linear infinite'}}>
-              {[1, 2].map((iter) => (
-                <React.Fragment key={iter}>
-                  {!newsLoading && news.length > 0 ? news.map((item, idx) => (
-                    <span key={idx + '-' + iter}>
-                      <span className="text-gray-300">[{item.source}]</span> {item.title}
-                      <span className="mx-8 opacity-40">|</span>
-                    </span>
-                  )) : (
-                    <span>SYNCING INTEL FEEDS...<span className="mx-8 opacity-40">|</span></span>
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
+        {/* Tab switcher */}
+        <div className="flex gap-1 bg-white/5 p-0.5 rounded-lg border border-white/8">
+          {(['LIVE', 'ANALYTICS'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
+                activeTab === tab ? 'bg-[#00d4ff] text-black' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {tab === 'LIVE' && (
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#ff3b3b] animate-ping-glow' : 'bg-gray-600'}`} />
+                  LIVE
+                </span>
+              )}
+              {tab === 'ANALYTICS' && 'ANALYTICS'}
+            </button>
+          ))}
         </div>
 
+        {/* Right controls */}
+        <div className="flex items-center gap-2">
+          <button onClick={() => exportData(attacks, 'csv')} title="Export CSV" className="text-gray-500 hover:text-white transition-colors p-1.5 rounded hover:bg-white/8">
+            <Download size={14} />
+          </button>
+          <button onClick={() => { setLeftCollapsed(l => !l); setRightCollapsed(r => !r); }} title="Toggle fullscreen globe" className="text-gray-500 hover:text-white transition-colors p-1.5 rounded hover:bg-white/8">
+            <Maximize2 size={14} />
+          </button>
+          <button onClick={() => setIsDarkMode(d => !d)} className="text-gray-500 hover:text-white transition-colors p-1.5 rounded hover:bg-white/8">
+            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+          <button onClick={() => setShowShortcuts(true)} className="text-gray-500 hover:text-[#00d4ff] transition-colors p-1.5 rounded hover:bg-white/8">
+            <HelpCircle size={14} />
+          </button>
+        </div>
+      </header>
+
+      {/* ── Tickers ── */}
+      <Ticker attacks={visibleAttacks} news={news} isPaused={isPaused} />
+
+      {/* ── Filter Bar ── */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/5 bg-black/20 shrink-0">
+        {(['ALL', 'SYN', 'UDP', 'HTTP'] as const).map(f => {
+          const isActive = activeFilter === f;
+          const colors: Record<FilterType, string> = {
+            ALL:  'text-white border-white/40 bg-white/10',
+            SYN:  'text-[#ff3b3b] border-[#ff3b3b]/50 bg-[#ff3b3b]/10',
+            UDP:  'text-[#ff8c00] border-[#ff8c00]/50 bg-[#ff8c00]/10',
+            HTTP: 'text-[#ffd700] border-[#ffd700]/50 bg-[#ffd700]/10',
+          };
+          return (
+            <button
+              key={f}
+              onClick={() => setActiveFilter(f)}
+              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded border transition-all ${
+                isActive ? colors[f] : 'text-gray-500 border-transparent hover:text-white hover:bg-white/5'
+              }`}
+            >
+              {f}
+              {f !== 'ALL' && (
+                <span className="ml-1.5 opacity-60">
+                  {f === 'SYN' ? typeBreakdown.SYN : f === 'UDP' ? typeBreakdown.UDP : typeBreakdown.HTTP}%
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <div className="ml-auto text-[9px] font-mono text-gray-600">
+          {visibleAttacks.length.toLocaleString()} events
+        </div>
       </div>
 
-      <main className="flex-1 flex flex-col md:flex-row min-h-0">
-        <section className="relative flex-1 h-full">
-          <GlobeView 
-            attacks={visibleAttacks}
-            selectedAttack={selectedAttack}
-            onSelectAttack={setSelectedAttack}
-          />
-          <AttackDetail 
-            attack={selectedAttack}
-            onClose={() => setSelectedAttack(null)}
-          />
-        </section>
+      {/* ── Main Content (3 panel) ── */}
+      <main className="flex-1 flex min-h-0 overflow-hidden">
 
-        <aside className="w-full md:w-[320px] lg:w-[380px] flex flex-col h-full border-l border-white/10 bg-black/40 backdrop-blur-md relative z-10 shrink-0">
-          <TopBar 
-            threatScore={threatScore || 0}
-            isConnected={isConnected && !isPaused}
-          />
-          
-          <FiltersBar 
-            activeFilter={activeFilter}
-            onFilterChange={setActiveFilter}
+        {/* LEFT PANEL — 280px, collapsible */}
+        {!leftCollapsed && (
+          <aside className="w-[280px] shrink-0 flex flex-col border-r border-white/8 bg-[#0d1520]/60 backdrop-blur-sm overflow-y-auto z-20">
+            <KPICards
+              stats={stats}
+              avgConfidence={stats.avg_confidence}
+              modelName={metrics?.model_name ?? 'RandomForest'}
+            />
+            <TypeBar stats={typeBreakdown} />
+            <MLPanel metrics={metrics} uptime={uptime} />
+          </aside>
+        )}
+
+        {/* Left collapse toggle */}
+        <button
+          onClick={() => setLeftCollapsed(l => !l)}
+          className="shrink-0 w-4 flex items-center justify-center border-r border-white/5 bg-black/30 hover:bg-white/5 transition-colors text-gray-600 hover:text-white z-20"
+        >
+          {leftCollapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        </button>
+
+        {/* CENTER — Globe + Bottom Table */}
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          {/* Globe (LIVE) / Analytics (ANALYTICS) */}
+          {activeTab === 'LIVE' ? (
+            <div className="flex-1 relative min-h-0">
+              <GlobeView
+                attacks={visibleAttacks}
+                selectedAttack={selectedAttack}
+                onSelectAttack={setSelectedAttack}
+              />
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-600 text-sm font-mono">
+              Analytics tab — connect backend for live charts
+            </div>
+          )}
+
+          {/* WebSocket status bar above table */}
+          <ConnectionStatusBar
+            status={connectionStatus}
+            eventsPerSec={parseFloat(eventsPerSec.toFixed(2))}
+            totalProcessed={stats.total_events}
           />
 
-          <div className="grid grid-cols-2 gap-2 p-4 border-b border-white/10 bg-black/20">
-            <div className="bg-red-950/20 border border-red-500/20 p-2 rounded flex flex-col items-center justify-center">
-              <span className="text-[9px] text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1"><Activity size={10}/> Attacks / Min</span>
-              <span className="text-lg font-mono text-red-400 font-bold drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]">{stats.attacksPerMin}</span>
-            </div>
-            <div className="bg-orange-950/20 border border-orange-500/20 p-2 rounded flex flex-col items-center justify-center">
-              <span className="text-[9px] text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1"><Globe2 size={10}/> Top Source</span>
-              <span className="text-sm font-semibold text-orange-400 truncate w-full text-center" title={stats.topSource}>
-                {getFlag(stats.topSource)} {stats.topSource}
-              </span>
-            </div>
-            <div className="bg-cyan-950/20 border border-cyan-500/20 p-2 rounded flex flex-col items-center justify-center">
-              <span className="text-[9px] text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1"><Target size={10}/> Top Target</span>
-              <span className="text-sm font-semibold text-cyan-400 truncate w-full text-center" title={stats.topTarget}>
-                {getFlag(stats.topTarget)} {stats.topTarget}
-              </span>
-            </div>
-            <div className="bg-white/5 border border-white/10 p-2 rounded flex flex-col items-center justify-center">
-              <span className="text-[9px] text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1"><Network size={10}/> Peak Intensity</span>
-              <span className="text-lg font-mono text-white tracking-widest">{(stats.peakIntensity * 100).toFixed(0)}%</span>
+          {/* Attack Table */}
+          <div className="h-48 border-t border-white/8 bg-[#080d14]/80 overflow-hidden flex flex-col">
+            <AttackTable attacks={visibleAttacks} onSelectAttack={setSelectedAttack} />
+          </div>
+        </div>
+
+        {/* Right collapse toggle */}
+        <button
+          onClick={() => setRightCollapsed(r => !r)}
+          className="shrink-0 w-4 flex items-center justify-center border-l border-white/5 bg-black/30 hover:bg-white/5 transition-colors text-gray-600 hover:text-white z-20"
+        >
+          {rightCollapsed ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+        </button>
+
+        {/* RIGHT PANEL — 300px, collapsible */}
+        {!rightCollapsed && (
+          <aside className="w-[300px] shrink-0 flex flex-col border-l border-white/8 bg-[#0d1520]/60 backdrop-blur-sm overflow-y-auto z-20">
+            <ThreatIntelFeed activeAttacks={visibleAttacks} news={news} loading={newsLoading} />
+            <MITREPanel attacks={visibleAttacks} />
+            <FeatureImportancePanel metrics={metrics} />
+          </aside>
+        )}
+
+        {/* IP Intelligence slide-in (over right side of globe) */}
+        {selectedAttack && (
+          <div className="absolute inset-y-0 right-0 z-40 pointer-events-none" style={{ top: 0 }}>
+            <div className="pointer-events-auto h-full">
+              <IPIntelPanel
+                attack={selectedAttack}
+                onClose={() => setSelectedAttack(null)}
+                sessionHistory={attacks}
+              />
             </div>
           </div>
-
-          <div className="p-4 border-b border-white/5 bg-black/30">
-            <div className="flex justify-between text-[9px] text-gray-500 font-mono tracking-widest mb-2">
-              <span>SYN {stats.breakdown.syn.toFixed(0)}%</span>
-              <span>UDP {stats.breakdown.udp.toFixed(0)}%</span>
-              <span>HTTP {stats.breakdown.http.toFixed(0)}%</span>
-            </div>
-            <div className="w-full h-1.5 rounded-full flex overflow-hidden opacity-80 hover:opacity-100 transition-opacity">
-              <div className="h-full bg-red-500 transition-all duration-1000" style={{ width: `${stats.breakdown.syn}%` }}></div>
-              <div className="h-full bg-orange-500 transition-all duration-1000" style={{ width: `${stats.breakdown.udp}%` }}></div>
-              <div className="h-full bg-cyan-400 transition-all duration-1000" style={{ width: `${stats.breakdown.http}%` }}></div>
-            </div>
-          </div>
-
-          <AttackTable 
-            attacks={visibleAttacks}
-            onSelectAttack={setSelectedAttack}
-          />
-
-          <ThreatIntelFeed 
-            activeAttacks={visibleAttacks} 
-            news={news} 
-            loading={newsLoading} 
-          />
-
-          <div className="border-t border-white/10 bg-black/60 shrink-0">
-            <button 
-              onClick={() => setIsMlExpanded(!isMlExpanded)}
-              className="w-full flex items-center justify-between p-3 text-left hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-300 uppercase tracking-widest">
-                <Cpu size={14} className="text-purple-400" />
-                🧠 ML Detection Engine
-              </div>
-              {isMlExpanded ? <ChevronUp size={14} className="text-gray-500"/> : <ChevronDown size={14} className="text-gray-500"/>}
-            </button>
-            
-            {isMlExpanded && (
-              <div className="p-4 pt-0 text-[10px] text-gray-400 space-y-2 border-t border-white/5 bg-black/40">
-                <div className="flex justify-between mt-2">
-                  <span className="text-gray-500">Model:</span>
-                  <span className="text-gray-300 font-mono">Random Forest Classifier</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Training Accuracy:</span>
-                  <span className="text-green-400 font-mono font-bold">98.7%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Dataset:</span>
-                  <span className="text-gray-300 font-mono">CIC-DDoS2019</span>
-                </div>
-                <div className="pt-2 border-t border-white/5 mt-2">
-                  <span className="text-gray-500 block mb-1">Features Analyzed:</span>
-                  <span className="text-gray-300 font-mono text-[9px]">Packet rate, flow duration, byte count, TCP flags, IAT</span>
-                </div>
-                <div className="mt-3 inline-flex items-center gap-1 bg-green-900/40 border border-green-500/30 text-green-400 px-2 py-1 rounded-full text-[8px] tracking-widest uppercase font-bold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                  Model Active
-                </div>
-              </div>
-            )}
-          </div>
-        </aside>
+        )}
       </main>
 
-      <footer className="w-full h-6 bg-black border-t border-white/10 flex items-center justify-between px-4 text-[9px] font-mono text-gray-500 shrink-0">
-        <div className="flex gap-6">
-          <span suppressHydrationWarning={true}>Session started: {sessionStart || '--:--:--'}</span>
-          <span>Total attacks intercepted: {attacks.length.toLocaleString()}</span>
-          <span>Countries involved: {stats.uniqueCountries}</span>
+      {/* ── Footer ── */}
+      <footer className="h-6 border-t border-white/8 bg-black/60 flex items-center justify-between px-4 text-[9px] font-mono text-gray-600 shrink-0">
+        <div className="flex gap-5">
+          <span suppressHydrationWarning>{sessionStartStr ? `Session: ${sessionStartStr}` : 'Session: loading...'}</span>
+          <span>Total: {attacks.length.toLocaleString()} events</span>
+          <span>{stats.unique_countries} countries</span>
         </div>
-        <div className="hidden md:flex gap-6">
-          <span className="flex items-center gap-1"><Database size={10} /> Data source: CIC-DDoS2019</span>
-          <span className="flex items-center gap-1"><Cpu size={10} /> Model: Random Forest | Accuracy: 98.7%</span>
+        <div className="hidden md:flex gap-5">
+          <span>CIC-DDoS2019 · RF/XGBoost · SMOTE · SHAP</span>
+          <span>Gaps: G1 G2 G3 G4 G5 G6</span>
         </div>
-        <div>
-          Built with Next.js · react-globe.gl · WebSocket · ThreatMapX v1.0 
-        </div>
+        <div>ThreatMapX v2.0 · Next.js · FastAPI · WebGL</div>
       </footer>
+
+      {/* ── Keyboard Shortcuts Modal ── */}
+      <KeyboardShortcuts isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );
 }

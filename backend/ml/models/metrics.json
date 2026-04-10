@@ -1,0 +1,24 @@
+{
+  "model_name": "RandomForest",
+  "accuracy": 1.0,
+  "weighted_f1": 1.0,
+  "per_class_f1": {
+    "BENIGN": 1.0,
+    "HTTP": 1.0,
+    "SYN": 1.0,
+    "UDP": 1.0
+  },
+  "training_timestamp": "2026-04-10T18:06:49.516284+00:00",
+  "dataset_type": "synthetic",
+  "hardware_used": "CPU (i9-13900H, 20 cores)",
+  "smote_applied": true,
+  "n_features": 49,
+  "class_names": [
+    "BENIGN",
+    "HTTP",
+    "SYN",
+    "UDP"
+  ],
+  "rf_f1": 1.0,
+  "xgb_f1": 1.0
+}

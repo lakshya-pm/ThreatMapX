@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import Globe from 'react-globe.gl';
-import { AttackEvent } from '../types/attack';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import Globe, { GlobeMethods } from 'react-globe.gl';
+import { AttackEvent } from '@/types/attack';
 import countriesGeoJson from './countries.geojson.json';
 
 interface GlobeComponentProps {
@@ -11,37 +11,34 @@ interface GlobeComponentProps {
   onSelectAttack: (attack: AttackEvent) => void;
 }
 
+const ARC_COLORS: Record<string, string> = {
+  SYN:  'rgba(255, 59, 59, 0.85)',
+  UDP:  'rgba(255, 140, 0, 0.85)',
+  HTTP: 'rgba(255, 215, 0, 0.85)',
+};
+
+const RING_COLORS: Record<string, string> = {
+  SYN:  'rgba(255, 59, 59, 0.5)',
+  UDP:  'rgba(255, 140, 0, 0.5)',
+  HTTP: 'rgba(255, 215, 0, 0.5)',
+};
+
+type GeoFeature = { properties: Record<string, string> };
+
 export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAttack }: GlobeComponentProps) {
-  const globeEl = useRef<any>();
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const globeEl = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isPaused, setIsPaused] = useState(false);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [isAutoRotating, setIsAutoRotating] = useState(true);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (globeEl.current) {
-      const controls = globeEl.current.controls();
-      controls.autoRotate = !isPaused;
-      controls.autoRotateSpeed = 0.3;
-    }
-  }, [isPaused]);
-
-  useEffect(() => {
-    if (selectedAttack && globeEl.current) {
-      globeEl.current.pointOfView({ 
-        lat: selectedAttack.dstLat, 
-        lng: selectedAttack.dstLng, 
-        altitude: 2 
-      }, 1000);
-      setIsPaused(true);
-    }
-  }, [selectedAttack]);
-
+  // ── Resize observer ──────────────────────────────────────────────────────────
   useEffect(() => {
     const onResize = () => {
       if (containerRef.current) {
         setDimensions({
           width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight
+          height: containerRef.current.clientHeight,
         });
       }
     };
@@ -50,80 +47,121 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const getArcColor = (type: string) => {
-    const c: Record<string, string> = { 
-      SYN: 'rgba(255,40,40,0.9)', 
-      UDP: 'rgba(255,140,0,0.9)', 
-      HTTP: 'rgba(0,210,255,0.9)' 
-    };
-    return c[type] || 'rgba(200,200,200,0.7)';
-  };
+  // ── Auto-rotate control ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (globeEl.current) {
+      const controls = globeEl.current.controls();
+      controls.autoRotate = isAutoRotating;
+      controls.autoRotateSpeed = 0.3;
+    }
+  }, [isAutoRotating]);
 
-  const getRingColor = (type: string) => {
-    const c: Record<string, string> = { 
-      SYN: 'rgba(255,40,40,0.4)', 
-      UDP: 'rgba(255,140,0,0.4)', 
-      HTTP: 'rgba(0,210,255,0.4)' 
-    };
-    return c[type] || 'rgba(200,200,200,0.4)';
-  };
+  // ── Snap to severe attack ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (selectedAttack && globeEl.current) {
+      globeEl.current.pointOfView(
+        { lat: selectedAttack.target_lat, lng: selectedAttack.target_lng, altitude: 1.8 },
+        1200,
+      );
+      setIsAutoRotating(false);
+    }
+  }, [selectedAttack]);
 
-  const visibleArcs = useMemo(() => attacks.slice(0, 5), [attacks]);
-
-  // Debug: verify arc data shape on first render
-  if (visibleArcs.length > 0 && typeof window !== 'undefined') {
-    console.log('[ThreatMapX] First arc object:', visibleArcs[0]);
-  }
-
-  const ringsData = attacks.slice(0, 5).map(atk => ({
-    lat: atk.dstLat,
-    lng: atk.dstLng,
-    maxR: 3,
-    propagationSpeed: 2,
-    repeatPeriod: 800,
-    color: getRingColor(atk.attackType)
-  }));
-
-  const { attackCountries, countryAttackCount } = useMemo(() => {
-    const counts: Record<string, number> = {};
-    const countries = new Set<string>();
-    attacks.forEach(atk => {
-      counts[atk.dstCountry] = (counts[atk.dstCountry] || 0) + 1;
-      countries.add(atk.dstCountry);
-    });
-    return { attackCountries: countries, countryAttackCount: counts };
+  // Auto-snap on severity > 80 (most recent high-sev attack)
+  const lastHighSev = useMemo(() => {
+    return attacks.find(a => a.severity > 80);
   }, [attacks]);
 
-  const attackedFeatures = useMemo(() => {
-    return ((countriesGeoJson as any).features as any[]).filter(f => {
-      const name = f.properties.NAME || f.properties.name || f.properties.ADMIN || '';
-      return attackCountries.has(name);
-    });
-  }, [attackCountries]);
+  useEffect(() => {
+    if (lastHighSev && globeEl.current && !selectedAttack) {
+      globeEl.current.pointOfView(
+        { lat: lastHighSev.target_lat, lng: lastHighSev.target_lng, altitude: 2 },
+        800,
+      );
+    }
+  }, [lastHighSev?.id, selectedAttack]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  let interactionTimeout: any = null;
-  const handleInteraction = () => {
-    setIsPaused(true);
-    if (interactionTimeout) clearTimeout(interactionTimeout);
-    interactionTimeout = setTimeout(() => {
-      if (!selectedAttack) setIsPaused(false);
+  const handleInteraction = useCallback(() => {
+    setIsAutoRotating(false);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      if (!selectedAttack) setIsAutoRotating(true);
     }, 5000);
-  };
+  }, [selectedAttack]);
+
+  // ── Arc buffer — NEVER more than 8 arcs ─────────────────────────────────────
+  const arcsMemo = useMemo(() => attacks.slice(-8), [attacks]);
+
+  // ── Rings at target coords (last 5 non-benign) ───────────────────────────────
+  const ringsData = useMemo(() =>
+    attacks.slice(-5).map(atk => ({
+      lat: atk.target_lat,
+      lng: atk.target_lng,
+      maxR: Math.max(1, atk.severity / 10),
+      propagationSpeed: 2,
+      repeatPeriod: 800,
+      color: RING_COLORS[atk.attack_type] ?? 'rgba(200,200,200,0.4)',
+    })),
+    [attacks],
+  );
+
+  // ── Country heatmap ───────────────────────────────────────────────────────────
+  const { srcCounts, dstCounts } = useMemo(() => {
+    const src: Record<string, number> = {};
+    const dst: Record<string, number> = {};
+    attacks.forEach(a => {
+      src[a.source_country] = (src[a.source_country] ?? 0) + 1;
+      dst[a.target_country] = (dst[a.target_country] ?? 0) + 1;
+    });
+    return { srcCounts: src, dstCounts: dst };
+  }, [attacks]);
+
+  const top5Src = useMemo(() =>
+    new Set(Object.entries(srcCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c]) => c)),
+    [srcCounts],
+  );
+  const top5Dst = useMemo(() =>
+    new Set(Object.entries(dstCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c]) => c)),
+    [dstCounts],
+  );
+
+  const getCountryName = (f: GeoFeature) =>
+    f.properties.NAME ?? f.properties.name ?? f.properties.ADMIN ?? '';
+
+  const polygonCapColor = useCallback((f: unknown) => {
+    const name = getCountryName(f as GeoFeature);
+    if (top5Src.has(name)) return 'rgba(255, 59, 59, 0.18)';
+    if (top5Dst.has(name)) return 'rgba(255, 140, 0, 0.18)';
+    return 'rgba(0, 180, 255, 0.06)';
+  }, [top5Src, top5Dst]);
+
+  const arcStroke = useCallback((d: unknown) => {
+    const atk = d as AttackEvent;
+    const maxPPS = atk.attack_type === 'SYN' ? 80_000 : atk.attack_type === 'UDP' ? 60_000 : 50_000;
+    return 0.3 + (Math.min(atk.packets_per_sec / maxPPS, 1) * 3.2);
+  }, []);
+
+  const arcColor = useCallback((d: unknown) => {
+    const atk = d as AttackEvent;
+    return ARC_COLORS[atk.attack_type] ?? 'rgba(200, 200, 200, 0.7)';
+  }, []);
 
   return (
-    <div 
-      ref={containerRef} 
+    <div
+      ref={containerRef}
       className="w-full h-full relative cursor-move"
       onMouseDown={handleInteraction}
       onTouchStart={handleInteraction}
       onWheel={handleInteraction}
     >
-      <div className="absolute bottom-4 right-4 z-40 text-[10px] uppercase font-mono tracking-widest text-gray-500 bg-black/40 px-2 py-1 rounded backdrop-blur border border-white/5">
-        {isPaused ? '⏸ paused' : '⟳ rotating'}
+      {/* Status badge */}
+      <div className="absolute bottom-4 right-4 z-40 text-[10px] uppercase font-mono tracking-widest text-gray-500 bg-black/50 px-2 py-1 rounded backdrop-blur border border-white/5">
+        {isAutoRotating ? '⟳ auto-rotate' : '⏸ paused'}
       </div>
 
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 text-[10px] uppercase font-mono tracking-widest text-gray-400 bg-black/60 border border-white/10 px-4 py-2 rounded-full backdrop-blur shadow-lg">
-        ⌨ Press <span className="text-white">S/U/H/A</span> to filter · <span className="text-white">Space</span> to pause
+      {/* Keyboard hint */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 text-[10px] uppercase font-mono tracking-widest text-gray-400 bg-black/60 border border-white/10 px-4 py-2 rounded-full backdrop-blur shadow-lg pointer-events-none">
+        <span className="text-white">S/U/H/A</span> filter · <span className="text-white">Space</span> pause · <span className="text-white">?</span> shortcuts
       </div>
 
       {dimensions.width > 0 && (
@@ -132,59 +170,41 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
           width={dimensions.width}
           height={dimensions.height}
           backgroundColor="rgba(0,0,0,0)"
-          
+
           globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
           backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
           atmosphereColor="deepskyblue"
           atmosphereAltitude={0.15}
 
-          polygonsData={attackedFeatures}
-          polygonCapColor={(f: any) => {
-            const name = f.properties.NAME || f.properties.name || f.properties.ADMIN || '';
-            const count = countryAttackCount[name] || 0;
-            if (count >= 9) return 'rgba(255,30,30,0.25)';
-            if (count >= 4) return 'rgba(255,80,0,0.18)';
-            return 'rgba(255,120,0,0.10)';
-          }}
-          polygonSideColor={() => 'rgba(0,0,0,0)'}
-          polygonStrokeColor={() => '#1e3a5a'}
+          polygonsData={(countriesGeoJson as { features: object[] }).features}
+          polygonCapColor={polygonCapColor}
+          polygonSideColor={() => 'rgba(0, 100, 255, 0.0)'}
+          polygonStrokeColor={() => '#1a3a4a'}
           polygonAltitude={0.005}
-          
-          arcsData={visibleArcs}
-          arcStartLat={(d: any) => d.srcLat}
-          arcStartLng={(d: any) => d.srcLng}
-          arcEndLat={(d: any) => d.dstLat}
-          arcEndLng={(d: any) => d.dstLng}
-          arcDashLength={0.6}
-          arcDashGap={0.4}
-          arcDashAnimateTime={3000}
-          arcDashInitialGap={() => Math.random()}
-          arcColor={(d: any) => {
-            const c: Record<string, string> = {
-              SYN: 'rgba(255,50,50,0.9)',
-              UDP: 'rgba(255,150,0,0.9)',
-              HTTP: 'rgba(0,210,255,0.9)'
-            };
-            return c[d.attackType] || 'rgba(200,200,200,0.8)';
-          }}
-          arcStroke={0.4}
-          arcAltitude={0.3}
-          
-          ringsData={ringsData}
-          ringColor={(d: any) => d.color}
-          ringMaxRadius={(d: any) => d.maxR}
-          ringPropagationSpeed={(d: any) => d.propagationSpeed}
-          ringRepeatPeriod={(d: any) => d.repeatPeriod}
-          
-          rendererConfig={{ 
-            antialias: false,
-            alpha: true,
-            powerPreference: 'high-performance'
-          }}
-          animateIn={false}
-          waitForGlobeReady={true}
 
-          onArcClick={(d: any) => onSelectAttack(d)}
+          arcsData={arcsMemo}
+          arcStartLat={(d: unknown) => (d as AttackEvent).source_lat}
+          arcStartLng={(d: unknown) => (d as AttackEvent).source_lng}
+          arcEndLat={(d: unknown) => (d as AttackEvent).target_lat}
+          arcEndLng={(d: unknown) => (d as AttackEvent).target_lng}
+          arcStroke={arcStroke}
+          arcDashLength={0.4}
+          arcDashGap={2}
+          arcDashAnimateTime={4000}
+          arcDashInitialGap={() => Math.random()}
+          arcAltitudeAutoScale={0.3}
+          arcColor={arcColor}
+          onArcClick={(d: unknown) => onSelectAttack(d as AttackEvent)}
+
+          ringsData={ringsData}
+          ringColor={(d: unknown) => (d as { color: string }).color}
+          ringMaxRadius={(d: unknown) => (d as { maxR: number }).maxR}
+          ringPropagationSpeed={(d: unknown) => (d as { propagationSpeed: number }).propagationSpeed}
+          ringRepeatPeriod={(d: unknown) => (d as { repeatPeriod: number }).repeatPeriod}
+
+          rendererConfig={{ antialias: false, alpha: true }}
+          animateIn={false}
+          waitForGlobeReady={false}
         />
       )}
     </div>

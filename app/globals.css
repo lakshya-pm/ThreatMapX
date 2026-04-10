@@ -1,37 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design System Variables ──────────────────────────────────────────────── */
+:root {
+  --bg-primary:    #080d14;
+  --bg-secondary:  #0d1520;
+  --bg-tertiary:   #111d2b;
+  --bg-panel:      rgba(13, 21, 32, 0.95);
+  --border:        rgba(255, 255, 255, 0.06);
+  --border-glow:   rgba(0, 212, 255, 0.15);
+  --border-active: rgba(0, 212, 255, 0.4);
+  --text-primary:  #e2e8f0;
+  --text-muted:    #64748b;
+  --text-faint:    #334155;
+  --accent:        #00d4ff;
+  --accent-dim:    rgba(0, 212, 255, 0.1);
+  --syn:           #ff3b3b;
+  --udp:           #ff8c00;
+  --http:          #ffd700;
+  --benign:        #00ff88;
+  --sev-low:       #22c55e;
+  --sev-medium:    #f59e0b;
+  --sev-high:      #ef4444;
+  --sev-critical:  #dc2626;
+  --font-mono:     'JetBrains Mono', 'Fira Code', monospace;
+  --font-ui:       'Inter', -apple-system, sans-serif;
+}
+
+/* Light theme */
+.light {
+  --bg-primary:   #f0f4f8;
+  --bg-secondary: #e2e8f0;
+  --bg-tertiary:  #cbd5e1;
+  --bg-panel:     rgba(240, 244, 248, 0.95);
+  --border:       rgba(0, 0, 0, 0.08);
+  --text-primary: #1e293b;
+  --text-muted:   #64748b;
+  --text-faint:   #94a3b8;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
 body {
-  background-color: #05060a;
-  color: white;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
   margin: 0;
   padding: 0;
   overflow: hidden;
 }
 
-::-webkit-scrollbar { width: 4px; }
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { 
-  background: rgba(255, 100, 0, 0.4); 
-  border-radius: 4px; 
-}
+::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 212, 255, 0.5); }
 
+/* ── Animations ────────────────────────────────────────────────────────────── */
 @keyframes ping-glow {
-  0% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.4); opacity: 0.5; }
+  0%   { transform: scale(1); opacity: 1; }
+  50%  { transform: scale(1.5); opacity: 0.4; }
   100% { transform: scale(1); opacity: 1; }
 }
-
-.animate-ping-glow {
-  animation: ping-glow 1.5s infinite ease-in-out;
-}
+.animate-ping-glow { animation: ping-glow 1.5s infinite ease-in-out; }
 
 @keyframes ticker {
-  0% { transform: translateX(0); }
+  0%   { transform: translateX(0); }
   100% { transform: translateX(-50%); }
 }
 
-.animate-ticker {
-  animation: ticker 60s linear infinite;
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
+.shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes fadeInUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }

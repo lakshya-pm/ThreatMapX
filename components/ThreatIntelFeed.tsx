@@ -22,7 +22,7 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
     if (hasKeyword) return true;
 
     // Check active countries
-    const activeCountries = Array.from(new Set(activeAttacks.map(a => a.srcCountry.toLowerCase())));
+    const activeCountries = Array.from(new Set(activeAttacks.map(a => a.source_country.toLowerCase())));
     const hasCountry = activeCountries.some(c => lowerText.includes(c));
     return hasCountry;
   };
