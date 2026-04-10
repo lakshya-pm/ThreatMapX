@@ -42,3 +42,9 @@ __pycache__/
 
 # Next.js build
 .next/
+backend/data/synthetic_data.csv
+backend/data/*.csv
+backend/data/cicddos2019/
+__pycache__/
+*.pyc
+.next/
