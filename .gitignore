@@ -48,3 +48,6 @@ backend/data/cicddos2019/
 __pycache__/
 *.pyc
 .next/
+backend/ml/models/model.joblib
+backend/ml/models/scaler.joblib
+backend/ml/models/label_encoder.joblib
