@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { ChevronDown, ChevronUp, Radio, Link as LinkIcon } from 'lucide-react';
-import { AttackEvent } from '../types/attack';
-import { NewsItem } from '../hooks/useThreatIntel';
+import { AttackEvent } from '@/types/attack';
+import { NewsItem } from '@/hooks/useThreatIntel';
 
 interface ThreatIntelFeedProps {
   activeAttacks: AttackEvent[];
@@ -15,7 +15,7 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
 
   const getCorrelatedStatus = (item: NewsItem) => {
     const lowerText = (item.title + ' ' + item.summary).toLowerCase();
-    
+
     // Check keywords
     const keywords = ['syn', 'udp', 'http', 'ddos', 'flood'];
     const hasKeyword = keywords.some(k => lowerText.includes(k));
@@ -34,7 +34,7 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
 
   return (
     <div className="border-t border-white/10 bg-black/60 shrink-0 flex flex-col max-h-64">
-      <button 
+      <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between p-3 text-left hover:bg-white/5 transition-colors shrink-0"
       >
@@ -46,7 +46,7 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
       </button>
 
       {isExpanded && (
-        <div className="flex-1 overflow-y-auto custom-scrollbar bg-black/40 border-t border-white/5 p-2 space-y-2">
+        <div className="flex-1 overflow-y-auto bg-black/40 border-t border-white/5 p-2 space-y-2">
           {loading ? (
             <div className="p-4 text-center text-[10px] text-gray-500 font-mono animate-pulse">
               SYNCING INTEL FEEDS...
@@ -59,10 +59,10 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
             news.map((item, idx) => {
               const isCorrelated = getCorrelatedStatus(item);
               return (
-                <a 
-                  key={idx} 
-                  href={item.link} 
-                  target="_blank" 
+                <a
+                  key={idx}
+                  href={item.link}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="block p-3 bg-white/5 border border-white/5 rounded hover:bg-[rgba(255,100,0,0.1)] hover:border-orange-500/30 transition-all group"
                 >
@@ -80,7 +80,7 @@ export default function ThreatIntelFeed({ activeAttacks, news, loading }: Threat
                         <span className="text-gray-500">
                           {formatDistanceToNowStrict(new Date(item.pubDate), { addSuffix: true })}
                         </span>
-                        
+
                         {isCorrelated && (
                           <div className="ml-auto inline-flex items-center gap-1 bg-orange-950/40 border border-orange-500/30 text-orange-400 px-1.5 py-0.5 rounded text-[8px] uppercase font-bold">
                             <LinkIcon size={8} />

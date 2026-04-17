@@ -21,6 +21,7 @@ interface GlobeViewProps {
   attacks: AttackEvent[];
   selectedAttack: AttackEvent | null;
   onSelectAttack: (attack: AttackEvent) => void;
+  onCountryClick?: (countryName: string) => void;
 }
 
 export default function GlobeView(props: GlobeViewProps) {

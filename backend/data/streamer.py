@@ -120,6 +120,9 @@ class DataStreamer:
 
         self._rng = random.Random()
 
+        # Diversity enforcement
+        self._force_next_class: str | None = None
+
     def add_broadcast_callback(self, cb: Any) -> None:
         self._broadcast_callbacks.append(cb)
 
@@ -129,20 +132,41 @@ class DataStreamer:
         except ValueError:
             pass
 
+    def _sample_source_target(self) -> tuple:
+        """Sample source and target IPs from different countries."""
+        countries = list(IP_POOL.keys())
+        src_country = self._rng.choice(countries)
+        tgt_countries = [c for c in countries if c != src_country]
+        tgt_country = self._rng.choice(tgt_countries)
+
+        src_ip, src_lat, src_lng = self._rng.choice(IP_POOL[src_country])
+        tgt_ip, tgt_lat, tgt_lng = self._rng.choice(IP_POOL[tgt_country])
+
+        return (src_country, src_ip, src_lat, src_lng,
+                tgt_country, tgt_ip, tgt_lat, tgt_lng)
+
     def _generate_event(self) -> dict[str, Any]:
         """Generate one synthetic attack event using ML classifier."""
-        # Pick attack type with realistic distribution: SYN 45%, UDP 30%, HTTP 15%, BENIGN 10%
-        attack_class = self._rng.choices(
-            ['SYN', 'UDP', 'HTTP', 'BENIGN'],
-            weights=[45, 30, 15, 10]
-        )[0]
 
-        # Source and target IPs
-        src_country, src_ip, src_lat, src_lng = self._rng.choice(_ALL_IPS)
+        # -- Diversity enforcement: if last 15 events are the same type, force variety
+        recent_types = [e['attack_type'] for e in list(self._recent_events)[-15:]]
+        if len(recent_types) >= 15 and len(set(recent_types)) == 1:
+            dominant = recent_types[0]
+            alternatives = [c for c in ['SYN', 'UDP', 'HTTP'] if c != dominant]
+            self._force_next_class = self._rng.choice(alternatives)
 
-        # Target is always United States or a different country
-        tgt_options = [x for x in _ALL_IPS if x[1] != src_ip]
-        tgt_country, tgt_ip, tgt_lat, tgt_lng = self._rng.choice(tgt_options)
+        if self._force_next_class:
+            attack_class = self._force_next_class
+            self._force_next_class = None
+        else:
+            # Realistic distribution: SYN 40%, UDP 30%, HTTP 20%, BENIGN 10%
+            attack_class = self._rng.choices(
+                ['SYN', 'UDP', 'HTTP', 'BENIGN'],
+                weights=[40, 30, 20, 10]
+            )[0]
+
+        # Source and target IPs (guaranteed different countries)
+        src_country, src_ip, src_lat, src_lng, tgt_country, tgt_ip, tgt_lat, tgt_lng = self._sample_source_target()
 
         # Packets/sec
         pps_min, pps_max = PPS_RANGES[attack_class]
@@ -150,19 +174,67 @@ class DataStreamer:
         bytes_per_sec = packets_per_sec * self._rng.randint(40, 1500)
         flow_duration_ms = self._rng.randint(100, 5000)
 
-        # Build feature snapshot for ML prediction
-        features: dict[str, float] = {
+        # Build feature dict covering ALL selected features for accurate inference
+        features: dict[str, float] = {f: 0.0 for f in self.classifier.selected_features}
+
+        # Core flow features
+        features.update({
             'Flow Packets/s': float(packets_per_sec),
             'Flow Bytes/s': float(bytes_per_sec),
             'Flow Duration': float(flow_duration_ms),
-            'SYN Flag Count': 1.0 if attack_class == 'SYN' else 0.0,
-            'Fwd PSH Flags': 1.0 if attack_class == 'HTTP' else 0.0,
-            'ACK Flag Count': 1.0 if attack_class in ('HTTP', 'BENIGN') else 0.0,
-            'Bwd Packets/s': float(packets_per_sec * 0.1),
-            'Fwd Packets/s': float(packets_per_sec * 0.9),
+            'Fwd Packets/s': float(packets_per_sec * self._rng.uniform(0.4, 0.9)),
+            'Bwd Packets/s': float(packets_per_sec * self._rng.uniform(0.0, 0.4)),
             'Total Fwd Packets': float(self._rng.randint(10, 5000)),
+            'Total Backward Packets': float(self._rng.randint(0, 3000)),
             'Packet Length Mean': float(self._rng.uniform(40, 1500)),
-        }
+            'Packet Length Std': float(self._rng.uniform(0, 400)),
+            'Min Packet Length': float(self._rng.uniform(20, 60)),
+            'Max Packet Length': float(self._rng.uniform(60, 1500)),
+            'Fwd Packet Length Max': float(self._rng.uniform(60, 1500)),
+            'Fwd Packet Length Min': float(self._rng.uniform(20, 60)),
+            'Fwd Packet Length Mean': float(self._rng.uniform(20, 800)),
+            'Bwd Packet Length Max': float(self._rng.uniform(0, 1500)),
+            'Bwd Packet Length Min': float(self._rng.uniform(0, 60)),
+            'Bwd Packet Length Mean': float(self._rng.uniform(0, 800)),
+            'Fwd Header Length': float(self._rng.uniform(20, 60)),
+            'Bwd Header Length': float(self._rng.uniform(0, 60)),
+            'Flow IAT Mean': float(self._rng.uniform(0, 5000)),
+            'Flow IAT Std': float(self._rng.uniform(0, 3000)),
+            'Fwd IAT Mean': float(self._rng.uniform(0, 5000)),
+            'Bwd IAT Mean': float(self._rng.uniform(0, 5000)),
+            'Total Length of Fwd Packets': float(self._rng.uniform(0, 5_000_000)),
+            'Total Length of Bwd Packets': float(self._rng.uniform(0, 3_000_000)),
+            'Subflow Fwd Bytes': float(self._rng.uniform(0, 5_000_000)),
+            'Subflow Bwd Bytes': float(self._rng.uniform(0, 3_000_000)),
+            'Average Packet Size': float(self._rng.uniform(40, 800)),
+            'Init_Win_bytes_forward': float(self._rng.randint(-1, 65535)),
+            'Init_Win_bytes_backward': float(self._rng.randint(-1, 65535)),
+            'Active Mean': float(self._rng.uniform(0, 1_000_000)),
+            'Active Min': float(self._rng.uniform(0, 500_000)),
+            'Idle Mean': float(self._rng.uniform(0, 1_000_000)),
+        })
+
+        # Attack-specific flags (critical for classification accuracy)
+        if attack_class == 'SYN':
+            features['SYN Flag Count'] = float(self._rng.randint(1, 10))
+            features['ACK Flag Count'] = 0.0
+            features['Fwd PSH Flags'] = 0.0
+            features['URG Flag Count'] = 0.0
+        elif attack_class == 'UDP':
+            features['SYN Flag Count'] = 0.0
+            features['ACK Flag Count'] = 0.0
+            features['Fwd PSH Flags'] = 0.0
+            features['URG Flag Count'] = 0.0
+        elif attack_class == 'HTTP':
+            features['Fwd PSH Flags'] = float(self._rng.randint(1, 3))
+            features['ACK Flag Count'] = float(self._rng.randint(1, 8))
+            features['SYN Flag Count'] = float(self._rng.randint(0, 2))
+            features['URG Flag Count'] = 0.0
+        else:  # BENIGN
+            features['Fwd PSH Flags'] = float(self._rng.randint(0, 2))
+            features['ACK Flag Count'] = float(self._rng.randint(0, 5))
+            features['SYN Flag Count'] = float(self._rng.randint(0, 2))
+            features['URG Flag Count'] = 0.0
 
         # Run prediction
         try:
@@ -177,8 +249,8 @@ class DataStreamer:
         try:
             top_feats, top_shap = self.classifier.get_top_shap_features(3)
         except Exception:
-            top_feats = ['SYN Flag Count', 'Flow Packets/s', 'Fwd PSH Flags']
-            top_shap = [0.31, 0.24, 0.14]
+            top_feats = ['ACK Flag Count', 'Fwd Packet Length Min', 'URG Flag Count']
+            top_shap = [0.38, 0.18, 0.11]
 
         top_vals = [features.get(f, 0.0) for f in top_feats]
 
@@ -213,7 +285,7 @@ class DataStreamer:
             'flow_duration_ms': flow_duration_ms,
             'severity': severity,
             'confidence': round(confidence, 4),
-            'model_used': getattr(self.classifier, 'model_name', 'RandomForest'),
+            'model_used': getattr(self.classifier, 'model_name', 'XGBoost'),
             'dataset_type': dataset_type,
             'mitre_id': mitre['id'],
             'mitre_tactic': mitre['tactic'],

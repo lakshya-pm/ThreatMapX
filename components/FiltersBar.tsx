@@ -11,7 +11,7 @@ const filters: FilterType[] = ['ALL', 'SYN', 'UDP', 'HTTP'];
 
 export default function FiltersBar({ activeFilter, onFilterChange }: FiltersBarProps) {
   return (
-    <div className="flex gap-2 p-4 border-b border-white/10 bg-black/20">
+    <div className="flex gap-2 p-4 border-b border-white/10 bg-black/20 shrink-0">
       {filters.map(f => {
         const isActive = activeFilter === f;
         let colorClass = 'text-gray-400 hover:text-white border-transparent hover:border-gray-500 bg-white/5';

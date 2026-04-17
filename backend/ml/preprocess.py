@@ -65,20 +65,22 @@ def preprocess(
 
     # ── 2. Drop low-variance features ─────────────────────────────────────────
     if fit:
-        vt = VarianceThreshold(threshold=0.0)
+        print(f'[PREPROCESS] Original features: {X.shape[1]}')
+        vt = VarianceThreshold(threshold=0.0)  # only drop truly zero-variance
         vt.fit(X)
         X = X.loc[:, vt.get_support()]
         print(f'[PREPROCESS] After variance filter: {X.shape[1]} features')
 
-    # ── 3. Drop highly correlated features ────────────────────────────────────
+    # ── 3. Drop highly correlated features (threshold 0.98) ───────────────────
     if fit:
         corr_matrix = X.corr().abs()
         upper = corr_matrix.where(
             np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
         )
-        to_drop = [col for col in upper.columns if any(upper[col] > 0.95)]
+        to_drop = [col for col in upper.columns if any(upper[col] > 0.99)]
         X = X.drop(columns=to_drop, errors='ignore')
-        print(f'[PREPROCESS] After correlation filter: {X.shape[1]} features (dropped {len(to_drop)})')
+        print(f'[PREPROCESS] After correlation filter: {X.shape[1]} features (dropped {len(to_drop)}) — FINAL')
+        assert X.shape[1] >= 38, f'Feature count too low: {X.shape[1]}. Relax thresholds further.'
         selected_features = list(X.columns)
 
     # ── 4. StandardScaler ─────────────────────────────────────────────────────
@@ -97,19 +99,47 @@ def preprocess(
         assert le is not None, 'LabelEncoder must be provided when fit=False'
         y = le.transform(y_raw)
 
-    # ── 6. SMOTE — training only ───────────────────────────────────────────────
+    # ── 6. SMOTE — training only (targeted: upsample HTTP minority) ────────────
     # Apply ONLY when fit=True (training phase), never on test set or inference.
     # Reference: O'Brien et al. 2023 — addresses class imbalance in CICDDoS2019.
     if fit:
         class_counts = pd.Series(y).value_counts()
         min_count = class_counts.min()
+        max_count = class_counts.max()
+
+        print(f'[SMOTE] Class distribution before SMOTE:')
+        for cls_idx, cnt in class_counts.items():
+            cls_name = le.classes_[cls_idx] if le is not None else str(cls_idx)
+            print(f'  {cls_name}: {cnt:,}')
+
         if min_count < 6:
             print(f'[SMOTE] Skipping SMOTE — min class count {min_count} < 6 neighbours required.')
         else:
-            print(f'[SMOTE] Applying SMOTE to training set (min class: {min_count} samples)...')
-            smote = SMOTE(random_state=42, k_neighbors=min(5, min_count - 1))
-            X_scaled, y = smote.fit_resample(X_scaled, y)
-            print(f'[SMOTE] After SMOTE: {X_scaled.shape[0]:,} samples')
+            # Targeted SMOTE: bring minority classes up to 25% of majority
+            target_min = int(max_count * 0.25)
+            sampling_strategy = {}
+            for cls_idx, cnt in class_counts.items():
+                if cnt < target_min:
+                    sampling_strategy[cls_idx] = target_min
+
+            if sampling_strategy:
+                print(f'[SMOTE] Target upsampling: {sampling_strategy}')
+                smote = SMOTE(
+                    sampling_strategy=sampling_strategy,
+                    random_state=42,
+                    k_neighbors=min(5, min_count - 1),
+                )
+                X_scaled, y = smote.fit_resample(X_scaled, y)
+            else:
+                print(f'[SMOTE] No minority classes need upsampling.')
+
+            new_counts = pd.Series(y).value_counts()
+            print(f'\n=== CLASS DISTRIBUTION (after SMOTE) ===')
+            for cls_idx, cnt in new_counts.items():
+                cls_name = le.classes_[cls_idx] if le is not None else str(cls_idx)
+                print(f'  {cls_name}: {cnt:,}')
+            print(f'Total: {X_scaled.shape[0]:,} samples')
+            print(f'=========================================\n')
 
     return X_scaled, y, scaler, le, selected_features  # type: ignore[return-value]
 
@@ -134,7 +164,7 @@ def save_feature_list(selected_features: list[str], path: str = './ml/models/fea
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w') as f:
         json.dump(selected_features, f, indent=2)
-    print(f'[PREPROCESS] Saved feature list → {path} ({len(selected_features)} features)')
+    print(f'[PREPROCESS] Saved feature list -> {path} ({len(selected_features)} features)')
 
 
 def load_feature_list(path: str = './ml/models/features.json') -> list[str]:

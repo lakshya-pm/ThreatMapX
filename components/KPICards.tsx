@@ -6,7 +6,7 @@ import { StreamStats } from '@/types/attack';
 
 interface KPICardsProps {
   stats: StreamStats;
-  avgConfidence: number;
+  accuracy: number;
   modelName: string;
 }
 
@@ -56,7 +56,7 @@ function SeverityGauge({ value }: { value: number }) {
   );
 }
 
-export default function KPICards({ stats, avgConfidence, modelName }: KPICardsProps) {
+export default function KPICards({ stats, accuracy, modelName }: KPICardsProps) {
   return (
     <div className="grid grid-cols-2 gap-2 p-3 border-b border-white/8 shrink-0">
       {/* Attacks/min */}
@@ -95,14 +95,14 @@ export default function KPICards({ stats, avgConfidence, modelName }: KPICardsPr
         </div>
       </div>
 
-      {/* ML Confidence */}
+      {/* ML Accuracy */}
       <div className="bg-purple-500/5 border border-purple-500/20 p-2.5 rounded-lg">
         <div className="flex items-center gap-1.5 mb-1.5">
           <Cpu size={10} className="text-purple-400" />
-          <span className="text-[9px] text-gray-500 uppercase tracking-widest">ML Conf.</span>
+          <span className="text-[9px] text-gray-500 uppercase tracking-widest">ML Accuracy</span>
         </div>
         <div className="text-xl font-mono font-bold text-purple-400 tabular-nums leading-none">
-          <AnimatedNumber value={avgConfidence * 100} decimals={1} />%
+          <AnimatedNumber value={accuracy * 100} decimals={1} />%
         </div>
         <div className="text-[9px] text-gray-500 mt-0.5 truncate">{modelName}</div>
       </div>

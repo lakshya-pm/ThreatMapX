@@ -24,8 +24,10 @@ import joblib
 import numpy as np
 import pandas as pd
 import shap
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_sample_weight
 
 # Add backend dir to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -96,14 +98,14 @@ def main() -> None:
     if use_gpu:
         try:
             from cuml.ensemble import RandomForestClassifier as cuRF
-            rf_model = cuRF(n_estimators=100, max_depth=20, random_state=42)
+            rf_model = cuRF(n_estimators=300, max_depth=None, random_state=42)
             hardware_rf = 'RAPIDS cuML (GPU)'
             print('[GPU] Using RAPIDS cuML Random Forest on RTX 4060')
         except ImportError:
             from sklearn.ensemble import RandomForestClassifier
             rf_model = RandomForestClassifier(
-                n_estimators=100, max_depth=20,
-                min_samples_split=5, min_samples_leaf=2,
+                n_estimators=300, max_depth=None,
+                min_samples_split=2, min_samples_leaf=1,
                 class_weight='balanced', n_jobs=-1, random_state=42
             )
             hardware_rf = 'sklearn (CPU fallback)'
@@ -111,8 +113,8 @@ def main() -> None:
     else:
         from sklearn.ensemble import RandomForestClassifier
         rf_model = RandomForestClassifier(
-            n_estimators=100, max_depth=20,
-            min_samples_split=5, min_samples_leaf=2,
+            n_estimators=300, max_depth=None,
+            min_samples_split=2, min_samples_leaf=1,
             class_weight='balanced', n_jobs=-1, random_state=42
         )
         hardware_rf = 'sklearn (CPU)'
@@ -140,15 +142,15 @@ def main() -> None:
     import xgboost as xgb
     device = 'cuda' if use_gpu else 'cpu'
     xgb_model = xgb.XGBClassifier(
-        n_estimators=100, max_depth=6, learning_rate=0.1,
+        n_estimators=200, max_depth=8, learning_rate=0.1,
         device=device, tree_method='hist',
         eval_metric='mlogloss', n_jobs=-1,
         random_state=42,
-        use_label_encoder=False
     )
     print(f'[XGB] Device: {device}')
+    sample_weights = compute_sample_weight('balanced', y_train)
     t0 = time.time()
-    xgb_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    xgb_model.fit(X_train, y_train, sample_weight=sample_weights, eval_set=[(X_test, y_test)], verbose=False)
     xgb_train_time = time.time() - t0
     print(f'[XGB] Training time: {xgb_train_time:.1f}s')
 
@@ -177,10 +179,58 @@ def main() -> None:
     print(f'  WINNER: {best_name} F1={best_f1:.4f}')
     print('='*60)
 
+    # ── HTTP F1 gate ───────────────────────────────────────────────────────────
+    http_f1 = best_report.get('HTTP', {}).get('f1-score', 0)
+    if http_f1 < 0.75:
+        print(f'\n[WARNING] HTTP F1 = {http_f1:.4f} — below target 0.75!')
+        print(f'[WARNING] Consider increasing n_estimators or adjusting SMOTE strategy.')
+    else:
+        print(f'\n[OK] HTTP F1 = {http_f1:.4f} — meets target >= 0.75')
+
+    # ── Probability calibration (isotonic) ─────────────────────────────────────
+    print('\n[Calibration] Fitting CalibratedClassifierCV with isotonic regression...')
+    calibrated_model = CalibratedClassifierCV(
+        best_model,
+        method='isotonic',
+        cv=5,
+    )
+    calibrated_model.fit(X_train, y_train)
+
+    # Evaluate calibrated model
+    y_pred_cal = calibrated_model.predict(X_test)
+    y_proba_cal = calibrated_model.predict_proba(X_test)
+    avg_conf_cal = float(y_proba_cal.max(axis=1).mean())
+
+    print(f'[Calibration] Average confidence on test set: {avg_conf_cal:.4f}')
+    cal_report = classification_report(y_test, y_pred_cal, target_names=class_names, output_dict=True)
+    cal_f1 = f1_score(y_test, y_pred_cal, average='weighted')
+    print(f'[Calibration] Weighted F1 (calibrated): {cal_f1:.4f}')
+    print('\n[Calibration] Classification Report (calibrated):')
+    print(classification_report(y_test, y_pred_cal, target_names=class_names))
+
+    # Per-class confidence diagnostic
+    print('\n[Calibration] Per-class confidence:')
+    for cls_name in class_names:
+        cls_idx = le.transform([cls_name])[0]
+        mask = (y_test == cls_idx)
+        if mask.sum() == 0:
+            continue
+        cls_conf = float(y_proba_cal[mask].max(axis=1).mean())
+        print(f'  {cls_name}: avg confidence = {cls_conf:.4f} (n={int(mask.sum())})')
+
+    if avg_conf_cal < 0.90:
+        print(f'\n[WARNING] avg_confidence = {avg_conf_cal:.4f} — below target 0.90!')
+    else:
+        print(f'\n[OK] avg_confidence = {avg_conf_cal:.4f} — meets target >= 0.90')
+
+    # Use calibrated report for final metrics
+    best_report = cal_report
+    best_f1 = cal_f1
+
     # ── SHAP values ───────────────────────────────────────────────────────────
     print('\n[SHAP] Computing feature importance on test set (top 20)...')
     try:
-        # Use a sample for speed
+        # Use a sample for speed — SHAP needs the underlying estimator, not calibrated wrapper
         sample_size = min(500, X_test.shape[0])
         X_sample = X_test[:sample_size]
 
@@ -189,15 +239,13 @@ def main() -> None:
 
         # Handle all SHAP return formats
         if isinstance(shap_values_raw, list):
-            # sklearn multi-class RF: list of (n_samples, n_features) arrays, one per class
             shap_abs = np.mean([np.abs(np.array(sv)) for sv in shap_values_raw], axis=0)
             mean_shap = shap_abs.mean(axis=0)
         elif hasattr(shap_values_raw, 'values'):
-            # SHAP Explanation object
             sv = np.array(shap_values_raw.values)
-            if sv.ndim == 3:  # (samples, features, classes)
+            if sv.ndim == 3:
                 mean_shap = np.abs(sv).mean(axis=0).mean(axis=1)
-            else:  # (samples, features)
+            else:
                 mean_shap = np.abs(sv).mean(axis=0)
         else:
             sv = np.array(shap_values_raw)
@@ -222,7 +270,6 @@ def main() -> None:
 
     except Exception as e:
         print(f'[SHAP] Warning — SHAP computation failed: {e}. Falling back to feature_importances_.')
-        # Fallback to sklearn .feature_importances_
         if hasattr(best_model, 'feature_importances_'):
             imp = best_model.feature_importances_
             feat_pairs = sorted(zip(selected_features, imp.tolist()), key=lambda x: x[1], reverse=True)[:20]
@@ -236,7 +283,9 @@ def main() -> None:
     # ── Save artifacts ────────────────────────────────────────────────────────
     print('\n[SAVE] Saving model artifacts...')
 
-    joblib.dump(best_model, MODEL_DIR / 'model.joblib')
+    # Save the CALIBRATED model — not the raw model
+    joblib.dump(calibrated_model, MODEL_DIR / 'model.joblib')
+    print('[Saved] Calibrated model saved to ml/models/model.joblib')
     joblib.dump(scaler, MODEL_DIR / 'scaler.joblib')
     joblib.dump(le, MODEL_DIR / 'label_encoder.joblib')
     save_feature_list(selected_features, str(MODEL_DIR / 'features.json'))
@@ -264,13 +313,17 @@ def main() -> None:
         'class_names': class_names,
         'rf_f1': float(rf_f1),
         'xgb_f1': float(xgb_f1),
+        'avg_confidence_test': avg_conf_cal,
+        'calibration_method': 'isotonic',
+        'n_estimators': 300,
+        'max_depth': 'None',
     }
 
     with open(MODEL_DIR / 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=2)
 
     print(f'\n[SAVE] All artifacts saved to {MODEL_DIR}/')
-    print(f'  model.joblib              ({best_name})')
+    print(f'  model.joblib              ({best_name} + isotonic calibration)')
     print(f'  scaler.joblib')
     print(f'  label_encoder.joblib')
     print(f'  features.json             ({len(selected_features)} features)')
@@ -278,7 +331,7 @@ def main() -> None:
     print(f'  metrics.json')
 
     print(f'\n[ThreatMapX] Training complete.')
-    print(f'[ThreatMapX] Model loaded: {best_name}, Accuracy: {accuracy*100:.1f}%, Dataset: {dataset_type}')
+    print(f'[ThreatMapX] Model: {best_name} (calibrated), Accuracy: {accuracy*100:.1f}%, Confidence: {avg_conf_cal:.4f}, Dataset: {dataset_type}')
 
 
 if __name__ == '__main__':

@@ -39,48 +39,62 @@ FEATURES: list[str] = [
 ]
 
 # ── Label mapping ──────────────────────────────────────────────────────────────
-# CIC-DDoS2019 raw labels → 3 attack classes + BENIGN
-# DrDoS_ types are UDP amplification attacks — NOT HTTP.
+# Attack class taxonomy for ThreatMapX:
+# SYN  = TCP SYN flood (T1498.001)
+# UDP  = UDP volumetric + DrDoS reflection/amplification (T1498.002)
+# HTTP = Direct application/service layer floods — WebDDoS, TFTP, LDAP,
+#        MSSQL, NetBIOS, Portmap (T1499.003)
+# Note: DrDoS_* variants use UDP reflection and belong to the UDP class.
+#       Non-DrDoS application floods belong to HTTP/App class.
 LABEL_MAP: dict[str, str] = {
-    # SYN flood
+    # Benign traffic
+    'BENIGN': 'BENIGN',
+    'Benign': 'BENIGN',
+    'benign': 'BENIGN',
+    # TCP SYN flood
     'Syn': 'SYN',
-    # UDP / Amplification / Reflection
+    # UDP amplification and reflection attacks (DrDoS prefix = UDP transport + reflection)
     'UDP': 'UDP',
     'UDPLag': 'UDP',
+    'UDP-lag': 'UDP',
+    'DrDoS_UDP': 'UDP',
     'DrDoS_DNS': 'UDP',
-    'DrDoS_NTP': 'UDP',
-    'DrDoS_SNMP': 'UDP',
-    'DrDoS_SSDP': 'UDP',
     'DrDoS_LDAP': 'UDP',
     'DrDoS_MSSQL': 'UDP',
+    'DrDoS_NTP': 'UDP',
     'DrDoS_NetBIOS': 'UDP',
     'DrDoS_Portmap': 'UDP',
-    'LDAP': 'UDP',
-    'MSSQL': 'UDP',
-    'NetBIOS': 'UDP',
-    'Portmap': 'UDP',
-    'TFTP': 'UDP',
-    # Application-layer HTTP flood
+    'DrDoS_SNMP': 'UDP',
+    'DrDoS_SSDP': 'UDP',
+    # Application/service layer floods (direct floods targeting application services)
     'WebDDoS': 'HTTP',
-    # Benign
-    'BENIGN': 'BENIGN',
+    'TFTP': 'HTTP',
+    'LDAP': 'HTTP',
+    'MSSQL': 'HTTP',
+    'NetBIOS': 'HTTP',
+    'Portmap': 'HTTP',
 }
 
 
 def load_dataset(data_dir: str = './data/cicddos2019') -> pd.DataFrame:
     """
-    Priority 1: Load real CIC-DDoS2019 CSVs if present in data_dir.
-    Priority 2: Generate synthetic data if CSVs not found.
+    Priority 1: Load real CIC-DDoS2019 Parquet/CSVs if present in data_dir.
+    Priority 2: Generate synthetic data if not found.
     Returns a DataFrame with 'Attack_Type' column and dataset_type attribute.
     """
     csv_files = glob.glob(f'{data_dir}/**/*.csv', recursive=True)
+    parquet_files = glob.glob(f'{data_dir}/**/*.parquet', recursive=True)
+    data_files = parquet_files + csv_files
 
-    if csv_files:
-        print(f'[REAL DATA] Found {len(csv_files)} CSV file(s). Loading...')
+    if data_files:
+        print(f'[REAL DATA] Found {len(data_files)} data file(s) ({len(parquet_files)} parquet, {len(csv_files)} csv). Loading...')
         dfs: list[pd.DataFrame] = []
-        for fp in csv_files:
+        for fp in data_files:
             try:
-                df_chunk = pd.read_csv(fp, encoding='latin-1', low_memory=False)
+                if fp.endswith('.parquet'):
+                    df_chunk = pd.read_parquet(fp)
+                else:
+                    df_chunk = pd.read_csv(fp, encoding='latin-1', low_memory=False)
                 # Strip whitespace from column names
                 df_chunk.columns = df_chunk.columns.str.strip()
                 dfs.append(df_chunk)
@@ -89,7 +103,7 @@ def load_dataset(data_dir: str = './data/cicddos2019') -> pd.DataFrame:
                 print(f'  [WARN] Could not load {fp}: {e}')
 
         if not dfs:
-            print('[WARN] All CSVs failed to load — falling back to synthetic.')
+            print('[WARN] All data files failed to load — falling back to synthetic.')
             return generate_synthetic_dataset()
 
         df = pd.concat(dfs, ignore_index=True)
@@ -103,9 +117,13 @@ def load_dataset(data_dir: str = './data/cicddos2019') -> pd.DataFrame:
                 break
         if label_col is None:
             raise ValueError(
-                'Could not find label column in CSV. '
+                'Could not find label column in data file. '
                 f'Columns found: {list(df.columns)[:20]}'
             )
+
+        # Print raw labels for diagnostics
+        raw_labels = df[label_col].astype(str).str.strip().unique()
+        print(f'[REAL DATA] Raw unique labels: {raw_labels}')
 
         # Map labels
         df['Attack_Type'] = df[label_col].astype(str).str.strip().map(LABEL_MAP)
@@ -116,6 +134,11 @@ def load_dataset(data_dir: str = './data/cicddos2019') -> pd.DataFrame:
             unknown_labels = df.loc[df['Attack_Type'].isna(), label_col].unique()
             print(f'[WARN] Dropping {unknown_before:,} rows with unknown labels: {unknown_labels[:10]}')
         df = df[df['Attack_Type'].notna()].copy()
+
+        print(f'\n=== CLASS DISTRIBUTION (after mapping) ===')
+        print(df['Attack_Type'].value_counts())
+        print(df['Attack_Type'].value_counts(normalize=True).round(3))
+        print(f'==========================================\n')
 
         # Drop non-feature columns
         drop_cols = [label_col, 'Flow ID', 'Source IP', 'Destination IP',
@@ -131,7 +154,7 @@ def load_dataset(data_dir: str = './data/cicddos2019') -> pd.DataFrame:
         df.dropna(inplace=True)
 
         print(f'[REAL DATA] Rows after cleaning: {len(df):,}')
-        print(f'[REAL DATA] Label distribution:\n{df["Attack_Type"].value_counts()}')
+        print(f'[REAL DATA] Final label distribution:\n{df["Attack_Type"].value_counts()}')
         df.attrs['dataset_type'] = 'real_cicddos2019'
         return df
 

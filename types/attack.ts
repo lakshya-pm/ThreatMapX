@@ -32,22 +32,9 @@ export interface AttackEvent {
   feature_snapshot: FeatureSnapshot;
 }
 
-// Legacy aliases for backward compat with old components
-export interface LegacyAttackEvent {
-  id: string;
-  timestamp: string;
-  srcLat: number;
-  srcLng: number;
-  dstLat: number;
-  dstLng: number;
-  srcCountry: string;
-  dstCountry: string;
-  srcIp: string;
-  dstIp: string;
-  attackType: AttackType;
-  intensity: number;
-  packetsPerSec: number;
-}
+// Utility: compute 0–1 intensity from severity (for arc width/glow compatibility)
+export const getIntensity = (a: AttackEvent): number =>
+  Math.min(1, a.severity / 100);
 
 export interface StreamStats {
   attacks_per_min: number;

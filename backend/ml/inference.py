@@ -72,9 +72,11 @@ class ThreatClassifier:
 
         t0 = time.perf_counter()
 
-        # Build feature vector aligned to selected_features
-        row = np.array([[features.get(f, 0.0) for f in self.selected_features]], dtype=np.float32)
-        scaled = self.scaler.transform(row)  # type: ignore[union-attr]
+        # Build feature vector aligned to selected_features (as DataFrame to match scaler training)
+        import pandas as pd
+        row_dict = {f: features.get(f, 0.0) for f in self.selected_features}
+        row_df = pd.DataFrame([row_dict], columns=self.selected_features)
+        scaled = self.scaler.transform(row_df)  # type: ignore[union-attr]
 
         proba = self.model.predict_proba(scaled)[0]
         pred_idx = int(np.argmax(proba))

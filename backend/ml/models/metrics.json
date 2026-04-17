@@ -1,24 +1,28 @@
 {
-  "model_name": "RandomForest",
-  "accuracy": 1.0,
-  "weighted_f1": 1.0,
+  "model_name": "XGBoost",
+  "accuracy": 0.9760996812518111,
+  "weighted_f1": 0.976071814014347,
   "per_class_f1": {
-    "BENIGN": 1.0,
-    "HTTP": 1.0,
-    "SYN": 1.0,
-    "UDP": 1.0
+    "BENIGN": 0.9975503955090584,
+    "HTTP": 0.9565968669713298,
+    "SYN": 0.994314143567875,
+    "UDP": 0.9711964867463655
   },
-  "training_timestamp": "2026-04-10T18:06:49.516284+00:00",
-  "dataset_type": "synthetic",
-  "hardware_used": "CPU (i9-13900H, 20 cores)",
+  "training_timestamp": "2026-04-16T09:41:06.276112+00:00",
+  "dataset_type": "real_cicddos2019",
+  "hardware_used": "RTX 4060 (GPU)",
   "smote_applied": true,
-  "n_features": 49,
+  "n_features": 41,
   "class_names": [
     "BENIGN",
     "HTTP",
     "SYN",
     "UDP"
   ],
-  "rf_f1": 1.0,
-  "xgb_f1": 1.0
+  "rf_f1": 0.9710791559431203,
+  "xgb_f1": 0.9745679550128344,
+  "avg_confidence_test": 0.97510331849374,
+  "calibration_method": "isotonic",
+  "n_estimators": 300,
+  "max_depth": "None"
 }

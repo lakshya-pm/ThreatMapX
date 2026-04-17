@@ -1,166 +1,197 @@
-'use client';
-
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { AttackEvent } from '@/types/attack';
 import { formatDistanceToNowStrict } from 'date-fns';
-import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import { Target, ArrowUpDown } from 'lucide-react';
 
 interface AttackTableProps {
   attacks: AttackEvent[];
   onSelectAttack: (attack: AttackEvent) => void;
 }
 
-type SortKey = 'timestamp' | 'severity' | 'confidence' | 'packets_per_sec';
+type SortField = 'timestamp' | 'severity' | 'packets_per_sec' | 'confidence';
 type SortDir = 'asc' | 'desc';
-
-const TYPE_BADGE: Record<string, string> = {
-  SYN:  'text-[#ff3b3b] bg-[#ff3b3b]/10 border-[#ff3b3b]/30',
-  UDP:  'text-[#ff8c00] bg-[#ff8c00]/10 border-[#ff8c00]/30',
-  HTTP: 'text-[#ffd700] bg-[#ffd700]/10 border-[#ffd700]/30',
-};
-
-const SEV_ROW: (sev: number) => string = sev => {
-  if (sev > 80) return 'border-l-[#dc2626] bg-[#dc2626]/4';
-  if (sev > 60) return 'border-l-[#ef4444] bg-[#ef4444]/3';
-  if (sev > 30) return 'border-l-[#f59e0b] bg-transparent';
-  return 'border-l-[#22c55e] bg-transparent';
-};
-
-function SeverityCell({ value }: { value: number }) {
-  const color = value > 80 ? '#dc2626' : value > 60 ? '#ef4444' : value > 30 ? '#f59e0b' : '#22c55e';
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-12 h-1 bg-white/10 rounded-full overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${value}%`, background: color }} />
-      </div>
-      <span className="font-mono text-[10px]" style={{ color }}>{value}</span>
-    </div>
-  );
-}
-
-function ConfBadge({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const cls = pct >= 90 ? 'text-green-400 bg-green-400/10' : pct >= 70 ? 'text-yellow-400 bg-yellow-400/10' : 'text-red-400 bg-red-400/10';
-  return <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${cls}`}>{pct}%</span>;
-}
-
-function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
-  if (!active) return <ChevronsUpDown size={10} className="text-gray-600" />;
-  return dir === 'asc' ? <ChevronUp size={10} className="text-[#00d4ff]" /> : <ChevronDown size={10} className="text-[#00d4ff]" />;
-}
 
 export default function AttackTable({ attacks, onSelectAttack }: AttackTableProps) {
   const [, setTick] = useState(0);
-  const [sortKey, setSortKey] = useState<SortKey>('timestamp');
+  const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const t = setInterval(() => setTick(v => v + 1), 5000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  const sorted = useMemo(() => {
-    const arr = [...attacks];
-    arr.sort((a, b) => {
-      let va: number, vb: number;
-      if (sortKey === 'timestamp') {
-        va = new Date(a.timestamp).getTime();
-        vb = new Date(b.timestamp).getTime();
-      } else {
-        va = a[sortKey];
-        vb = b[sortKey];
-      }
-      return sortDir === 'asc' ? va - vb : vb - va;
-    });
-    return arr.slice(0, 200);
-  }, [attacks, sortKey, sortDir]);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('desc'); }
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
   };
 
-  const SortTh = ({ label, k }: { label: string; k: SortKey }) => (
+  const sorted = useMemo(() => {
+    const slice = attacks.slice(0, 50);
+    return [...slice].sort((a, b) => {
+      let av: number, bv: number;
+      switch (sortField) {
+        case 'timestamp':
+          av = new Date(a.timestamp).getTime();
+          bv = new Date(b.timestamp).getTime();
+          break;
+        case 'severity':
+          av = a.severity; bv = b.severity; break;
+        case 'packets_per_sec':
+          av = a.packets_per_sec; bv = b.packets_per_sec; break;
+        case 'confidence':
+          av = a.confidence; bv = b.confidence; break;
+        default:
+          return 0;
+      }
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+  }, [attacks, sortField, sortDir]);
+
+  const getTypeColor = (type: string) => {
+    switch (type) {
+      case 'SYN': return 'bg-red-500/20 text-red-400 border border-red-500/30';
+      case 'UDP': return 'bg-orange-500/20 text-orange-400 border border-orange-500/30';
+      case 'HTTP': return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
+      default: return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
+    }
+  };
+
+  const getHoverColor = (type: string) => {
+    switch (type) {
+      case 'SYN': return 'hover:border-l-red-500';
+      case 'UDP': return 'hover:border-l-orange-500';
+      case 'HTTP': return 'hover:border-l-yellow-400';
+      default: return 'hover:border-l-gray-400';
+    }
+  };
+
+  const getConfColor = (conf: number) => {
+    if (conf >= 0.90) return 'text-emerald-400';
+    if (conf >= 0.70) return 'text-yellow-400';
+    return 'text-red-400';
+  };
+
+  const getConfBg = (conf: number) => {
+    if (conf >= 0.90) return 'bg-emerald-500/15 border-emerald-500/30';
+    if (conf >= 0.70) return 'bg-yellow-500/15 border-yellow-500/30';
+    return 'bg-red-500/15 border-red-500/30';
+  };
+
+  const SortHeader = ({ label, field, className }: { label: string; field: SortField; className?: string }) => (
     <th
-      className="p-2 font-medium text-left cursor-pointer select-none hover:text-[#00d4ff] transition-colors"
-      onClick={() => toggleSort(k)}
+      className={`p-2 font-medium cursor-pointer select-none hover:text-gray-300 transition-colors group ${className ?? ''}`}
+      onClick={() => toggleSort(field)}
     >
-      <span className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         {label}
-        <SortIcon active={sortKey === k} dir={sortDir} />
-      </span>
+        <ArrowUpDown size={8} className={`opacity-0 group-hover:opacity-60 transition-opacity ${sortField === field ? 'opacity-80 text-cyan-400' : ''}`} />
+      </div>
     </th>
   );
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
-      <table className="w-full text-left table-fixed min-w-[600px]">
-        <thead className="sticky top-0 bg-[#080d14]/95 backdrop-blur-md z-10 text-gray-500 uppercase tracking-widest text-[9px] border-b border-white/8">
+    <div className="w-full shrink-0 min-h-[250px] max-h-[300px] overflow-y-auto border-b border-white/5">
+      <table className="w-full text-left text-[10px] text-gray-300 table-fixed">
+        <thead className="sticky top-0 bg-[#05060a]/95 backdrop-blur-md z-10 text-gray-500 uppercase tracking-widest text-[9px]">
           <tr>
-            <SortTh label="Time" k="timestamp" />
-            <th className="p-2 font-medium w-[130px]">Source</th>
-            <th className="p-2 font-medium w-[130px]">Target</th>
-            <th className="p-2 font-medium w-[60px]">Type</th>
-            <SortTh label="Pkt/s" k="packets_per_sec" />
-            <SortTh label="Sev" k="severity" />
-            <SortTh label="Conf" k="confidence" />
-            <th className="p-2 font-medium">MITRE</th>
+            <SortHeader label="Time" field="timestamp" className="w-[11%]" />
+            <th className="p-2 font-medium w-[16%]">Source</th>
+            <th className="p-2 font-medium w-[16%]">Target</th>
+            <th className="p-2 font-medium w-[9%]">Type</th>
+            <SortHeader label="Pkt/s" field="packets_per_sec" className="w-[12%]" />
+            <SortHeader label="Sev" field="severity" className="w-[12%]" />
+            <SortHeader label="Conf" field="confidence" className="w-[11%]" />
+            <th className="p-2 font-medium w-[13%]">MITRE</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.length === 0 && (
+          {sorted.length === 0 ? (
             <tr>
-              <td colSpan={8} className="p-6 text-center text-gray-600 font-mono text-[10px] italic">
-                Awaiting live attack events...
-              </td>
+              <td colSpan={8} className="p-4 text-center text-gray-600 italic">No attacks detected...</td>
             </tr>
+          ) : (
+            sorted.map((atk, idx) => {
+              const hoverClass = getHoverColor(atk.attack_type);
+              return (
+                <tr
+                  key={atk.id}
+                  onClick={() => onSelectAttack(atk)}
+                  className={`border-b border-l-2 border-l-transparent border-white/5 cursor-pointer transition-all hover:bg-[rgba(0,180,255,0.06)] ${hoverClass} ${idx === 0 ? 'animate-pulse bg-white/5' : ''}`}
+                >
+                  {/* TIME */}
+                  <td className="p-2 text-gray-500 font-mono text-[8px] truncate">
+                    {formatDistanceToNowStrict(new Date(atk.timestamp), { addSuffix: true })}
+                  </td>
+
+                  {/* SOURCE */}
+                  <td className="p-2 max-w-0" title={`${atk.source_country} (${atk.source_ip})`}>
+                    <div className="font-semibold text-gray-200 truncate text-[9px]">{atk.source_country}</div>
+                    <div className="text-[8px] text-gray-600 font-mono truncate">{atk.source_ip}</div>
+                  </td>
+
+                  {/* TARGET */}
+                  <td className="p-2 max-w-0" title={`${atk.target_country} (${atk.target_ip})`}>
+                    <div className="font-semibold text-gray-200 truncate text-[9px]">{atk.target_country}</div>
+                    <div className="text-[8px] text-gray-600 font-mono truncate">{atk.target_ip}</div>
+                  </td>
+
+                  {/* TYPE */}
+                  <td className="p-2">
+                    <span className={`px-1 py-0.5 rounded text-[8px] inline-flex items-center gap-0.5 font-bold ${getTypeColor(atk.attack_type)}`}>
+                      <Target size={8} className="hidden sm:inline-block" />
+                      {atk.attack_type}
+                    </span>
+                  </td>
+
+                  {/* PKT/S */}
+                  <td className="p-2 text-right font-mono text-[9px] text-gray-300 tabular-nums">
+                    {atk.packets_per_sec.toLocaleString()}
+                  </td>
+
+                  {/* SEVERITY */}
+                  <td className="p-2">
+                    <div className="flex items-center gap-1">
+                      <span className={`font-mono text-[9px] font-bold tabular-nums ${atk.severity > 80 ? 'text-red-400' : atk.severity > 60 ? 'text-orange-400' : 'text-green-400'}`}>
+                        {atk.severity}
+                      </span>
+                      <div className="w-8 h-1 rounded-full bg-white/10 overflow-hidden hidden sm:block">
+                        <div
+                          className={`h-full rounded-full transition-all ${atk.severity > 80 ? 'bg-red-500' : atk.severity > 60 ? 'bg-orange-500' : 'bg-green-500'}`}
+                          style={{ width: `${atk.severity}%` }}
+                        />
+                      </div>
+                    </div>
+                  </td>
+
+                  {/* CONFIDENCE */}
+                  <td className="p-2">
+                    <span className={`font-mono text-[8px] font-bold px-1 py-0.5 rounded border ${getConfColor(atk.confidence)} ${getConfBg(atk.confidence)}`}>
+                      {(atk.confidence * 100).toFixed(1)}%
+                    </span>
+                  </td>
+
+                  {/* MITRE */}
+                  <td className="p-2">
+                    {atk.mitre_id ? (
+                      <span
+                        className="text-[8px] font-mono text-cyan-400 bg-cyan-500/10 px-1 py-0.5 rounded border border-cyan-500/20 cursor-help"
+                        title={atk.mitre_name}
+                      >
+                        {atk.mitre_id}
+                      </span>
+                    ) : (
+                      <span className="text-gray-600 text-[8px]">&mdash;</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
           )}
-          {sorted.map((atk, idx) => (
-            <tr
-              key={atk.id}
-              onClick={() => onSelectAttack(atk)}
-              className={`border-b border-l-2 border-white/4 cursor-pointer hover:bg-white/4 transition-colors text-[10px] ${SEV_ROW(atk.severity)} ${idx === 0 ? 'bg-white/3' : ''}`}
-            >
-              <td className="p-2 text-gray-500 font-mono whitespace-nowrap">
-                {formatDistanceToNowStrict(new Date(atk.timestamp), { addSuffix: true })}
-              </td>
-              <td className="p-2 max-w-0">
-                <div className="text-gray-200 truncate font-semibold">{atk.source_country}</div>
-                <div className="text-gray-500 font-mono text-[9px] truncate">{atk.source_ip}</div>
-              </td>
-              <td className="p-2 max-w-0">
-                <div className="text-gray-200 truncate">{atk.target_country}</div>
-                <div className="text-gray-500 font-mono text-[9px] truncate">{atk.target_ip}</div>
-              </td>
-              <td className="p-2">
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${TYPE_BADGE[atk.attack_type] ?? 'text-gray-400 bg-gray-400/10 border-gray-400/20'}`}>
-                  {atk.attack_type}
-                </span>
-              </td>
-              <td className="p-2 font-mono text-gray-300 whitespace-nowrap">
-                {atk.packets_per_sec >= 1000
-                  ? `${(atk.packets_per_sec / 1000).toFixed(0)}k`
-                  : atk.packets_per_sec}
-              </td>
-              <td className="p-2">
-                <SeverityCell value={atk.severity} />
-              </td>
-              <td className="p-2">
-                <ConfBadge value={atk.confidence} />
-              </td>
-              <td className="p-2">
-                {atk.mitre_id && (
-                  <span
-                    className="text-[9px] font-mono px-1 py-0.5 rounded bg-white/6 text-gray-400 cursor-help"
-                    title={`${atk.mitre_tactic}: ${atk.mitre_name}`}
-                  >
-                    {atk.mitre_id}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
         </tbody>
       </table>
     </div>
