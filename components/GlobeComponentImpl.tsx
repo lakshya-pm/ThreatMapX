@@ -13,21 +13,21 @@ interface GlobeComponentProps {
 }
 
 const ARC_COLORS: Record<string, [string, string]> = {
-  SYN:  ['rgba(255, 70, 70, 0.85)', 'rgba(255, 70, 70, 0.08)'],
-  UDP:  ['rgba(255, 160, 40, 0.85)', 'rgba(255, 160, 40, 0.08)'],
-  HTTP: ['rgba(255, 220, 60, 0.85)', 'rgba(255, 220, 60, 0.08)'],
+  SYN:  ['rgba(255, 59, 59, 0.9)', 'rgba(255, 59, 59, 0.15)'],
+  UDP:  ['rgba(255, 140, 0, 0.9)', 'rgba(255, 140, 0, 0.15)'],
+  HTTP: ['rgba(255, 215, 0, 0.9)', 'rgba(255, 215, 0, 0.15)'],
 };
 
 const POINT_COLORS: Record<string, string> = {
-  SYN:  '#ff4646',
-  UDP:  '#ffa028',
-  HTTP: '#ffdc3c',
+  SYN:  '#ff3b3b',
+  UDP:  '#ff8c00',
+  HTTP: '#ffd700',
 };
 
 const RING_COLORS: Record<string, string> = {
-  SYN:  'rgba(255, 70, 70, 0.35)',
-  UDP:  'rgba(255, 160, 40, 0.35)',
-  HTTP: 'rgba(255, 220, 60, 0.35)',
+  SYN:  'rgba(255, 59, 59, 0.5)',
+  UDP:  'rgba(255, 140, 0, 0.5)',
+  HTTP: 'rgba(255, 215, 0, 0.5)',
 };
 
 type GeoFeature = { properties: Record<string, string> };
@@ -74,7 +74,7 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
     }
   }, [selectedAttack]);
 
-  // Auto-snap on severity > 80 (most recent high-sev attack)
+  // Auto-snap on severity > 80
   const lastHighSev = useMemo(() => {
     return attacks.find(a => a.severity > 80);
   }, [attacks]);
@@ -96,21 +96,21 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
     }, 5000);
   }, [selectedAttack]);
 
-  // ── Arc buffer — max 6 arcs for a clean visual ──────────────────────────────
-  const arcsMemo = useMemo(() => attacks.slice(-6), [attacks]);
+  // ── Arc buffer — max 5 arcs for clean visuals ────────────────────────────────
+  const arcsMemo = useMemo(() => attacks.slice(-5), [attacks]);
 
-  // ── Points at attack sources (last 6) — subtle pinpoints ────────────────────
-  const pointsData = useMemo(() => attacks.slice(-6), [attacks]);
+  // ── Points at attack targets (last 5) ────────────────────────────────────────
+  const pointsData = useMemo(() => attacks.slice(-5), [attacks]);
 
-  // ── Rings at target coords (last 4 non-benign) ──────────────────────────────
+  // ── Rings at target coords (last 3) ──────────────────────────────────────────
   const ringsData = useMemo(() =>
-    attacks.slice(-4).map(atk => ({
+    attacks.slice(-3).map(atk => ({
       lat: atk.target_lat,
       lng: atk.target_lng,
-      maxR: Math.max(0.8, Math.min(3, atk.severity / 25)),
+      maxR: Math.max(2, atk.severity / 15),
       propagationSpeed: 1.5,
       repeatPeriod: 1200,
-      color: RING_COLORS[atk.attack_type] ?? 'rgba(200,200,200,0.25)',
+      color: RING_COLORS[atk.attack_type] ?? 'rgba(200,200,200,0.4)',
     })),
     [attacks],
   );
@@ -152,33 +152,33 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
     return 0.001;
   }, [top5Src, top5Dst]);
 
-  // ── Arc styling — thin comet trails ───────────────────────────────────────────
+  // ── Arc styling — cinematic comet trails ──────────────────────────────────────
   const arcAltitude = useCallback((d: unknown) => {
     const atk = d as AttackEvent;
     const dist = Math.sqrt(
       Math.pow(atk.target_lat - atk.source_lat, 2) +
       Math.pow(atk.target_lng - atk.source_lng, 2)
     );
-    // Gentle curves: short arcs stay low, long arcs cap at 0.45
-    return Math.min(0.45, Math.max(0.08, dist / 300));
+    // Keep arcs low and tight — max 0.35 (was 0.6)
+    return Math.min(0.35, Math.max(0.08, dist / 350));
   }, []);
 
   const arcStroke = useCallback((d: unknown) => {
     const atk = d as AttackEvent;
-    // Thin elegant lines: 0.15 base, max 0.8 for extreme severity
-    return Math.max(0.15, Math.min(0.8, atk.severity / 120));
+    // Thin elegant strokes — 0.3 to 1.0 (was up to 1.5)
+    return Math.max(0.3, Math.min(1.0, atk.severity / 100));
   }, []);
 
   const arcColor = useCallback((d: unknown) => {
     const atk = d as AttackEvent;
-    return ARC_COLORS[atk.attack_type] ?? ['rgba(200, 200, 200, 0.5)', 'rgba(200,200,200,0.05)'];
+    return ARC_COLORS[atk.attack_type] ?? ['rgba(200, 200, 200, 0.7)', 'rgba(200,200,200,0.15)'];
   }, []);
 
   const arcLabel = useCallback((d: unknown) => {
     const atk = d as AttackEvent;
-    return `<div style="font-size:11px;font-family:'JetBrains Mono',monospace;background:rgba(8,13,20,0.92);padding:8px 12px;border-radius:8px;border:1px solid rgba(0,212,255,0.15);box-shadow:0 4px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px)">
-      <b style="color:#e2e8f0">${atk.source_country}</b> <span style="color:#64748b">&rarr;</span> <b style="color:#e2e8f0">${atk.target_country}</b><br/>
-      <span style="color:${POINT_COLORS[atk.attack_type] ?? '#ccc'};font-weight:700">${atk.attack_type}</span> <span style="color:#475569">&middot;</span> <span style="color:#94a3b8">${atk.packets_per_sec.toLocaleString()} pkt/s</span> <span style="color:#475569">&middot;</span> <span style="color:${atk.severity > 80 ? '#ef4444' : atk.severity > 60 ? '#f59e0b' : '#22c55e'}">SEV ${atk.severity}</span>
+    return `<div style="font-size:11px;font-family:monospace;background:rgba(0,0,0,0.85);padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
+      <b>${atk.source_country}</b> &rarr; <b>${atk.target_country}</b><br/>
+      <span style="color:${POINT_COLORS[atk.attack_type] ?? '#ccc'}">${atk.attack_type}</span> &middot; ${atk.packets_per_sec.toLocaleString()} pkt/s &middot; SEV ${atk.severity}
     </div>`;
   }, []);
 
@@ -193,9 +193,9 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
     const srcN = srcCounts[name] || 0;
     const dstN = dstCounts[name] || 0;
     if (srcN === 0 && dstN === 0) return '';
-    return `<div style="font-size:11px;font-family:'JetBrains Mono',monospace;background:rgba(8,13,20,0.92);padding:8px 12px;border-radius:8px;border:1px solid rgba(0,212,255,0.15);box-shadow:0 4px 20px rgba(0,0,0,0.5)">
-      <b style="color:#e2e8f0">${name}</b><br/>
-      <span style="color:#94a3b8">Outbound: ${srcN} &middot; Inbound: ${dstN}</span>
+    return `<div style="font-size:11px;font-family:monospace;background:rgba(0,0,0,0.85);padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
+      <b>${name}</b><br/>
+      Outbound: ${srcN} &middot; Inbound: ${dstN}
     </div>`;
   }, [srcCounts, dstCounts]);
 
@@ -245,20 +245,20 @@ export default function GlobeComponentImpl({ attacks, selectedAttack, onSelectAt
           arcEndLng={(d: unknown) => (d as AttackEvent).target_lng}
           arcAltitude={arcAltitude}
           arcStroke={arcStroke}
-          arcDashLength={0.6}
-          arcDashGap={1.2}
-          arcDashAnimateTime={3500}
-          arcDashInitialGap={() => Math.random() * 2}
+          arcDashLength={0.8}
+          arcDashGap={0.6}
+          arcDashAnimateTime={2000}
           arcColor={arcColor}
           arcLabel={arcLabel}
           onArcClick={(d: unknown) => onSelectAttack(d as AttackEvent)}
+          arcsTransitionDuration={400}
 
           pointsData={pointsData}
-          pointLat={(d: unknown) => (d as AttackEvent).source_lat}
-          pointLng={(d: unknown) => (d as AttackEvent).source_lng}
+          pointLat={(d: unknown) => (d as AttackEvent).target_lat}
+          pointLng={(d: unknown) => (d as AttackEvent).target_lng}
           pointColor={(d: unknown) => POINT_COLORS[(d as AttackEvent).attack_type] ?? '#00d4ff'}
           pointAltitude={0.005}
-          pointRadius={(d: unknown) => Math.max(0.15, Math.min(0.5, (d as AttackEvent).severity / 200))}
+          pointRadius={(d: unknown) => Math.max(0.15, (d as AttackEvent).severity / 150)}
           pointsMerge={false}
 
           ringsData={ringsData}
