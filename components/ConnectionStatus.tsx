@@ -3,7 +3,7 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
 
-type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
+type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected' | 'demo';
 
 interface ConnectionStatusProps {
   status: ConnectionStatus;
@@ -24,6 +24,15 @@ export default function ConnectionStatusBar({
             <span className="relative rounded-full h-2 w-2 bg-green-500" />
           </span>
           <span className="text-green-400 font-bold">LIVE</span>
+        </>
+      )}
+      {status === 'demo' && (
+        <>
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="animate-ping-glow absolute h-full w-full rounded-full bg-[#00d4ff] opacity-75" />
+            <span className="relative rounded-full h-2 w-2 bg-[#00d4ff]" />
+          </span>
+          <span className="text-[#00d4ff] font-bold">DEMO MODE</span>
         </>
       )}
       {status === 'reconnecting' && (
