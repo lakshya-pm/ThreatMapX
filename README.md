@@ -10,7 +10,7 @@
 [![MITRE](https://img.shields.io/badge/MITRE_ATT%26CK-T1498_T1499-red?style=for-the-badge)](https://attack.mitre.org/)
 [![Research](https://img.shields.io/badge/Research_Gaps-G1_G2_G3_G4_G5_G6-22c55e?style=for-the-badge)](.)
 
-**A production-grade SOC dashboard that classifies network traffic in real-time using ML, visualizes attack flows on an interactive 3D globe, and provides SHAP-based explainability — addressing 6 critical research gaps identified across 10 published DDoS detection papers.**
+**A production-grade SOC dashboard that classifies network traffic in real-time using ML, visualizes attack flows on an interactive 3D globe, and provides SHAP-based explainability addressing 6 critical research gaps identified across 10 published DDoS detection papers.**
 
 <br/>
 
@@ -26,12 +26,12 @@ Existing DDoS detection research overwhelmingly focuses on **ML accuracy** but n
 
 | Gap | Problem in Literature | ThreatMapX Solution |
 |:---:|---|---|
-| **G1** | No real-time streaming pipeline — batch inference only | WebSocket + FastAPI live stream at ~1.25 events/sec |
+| **G1** | No real-time streaming pipeline: batch inference only | WebSocket + FastAPI live stream at ~1.25 events/sec |
 | **G2** | No interactive visualization | 3D WebGL globe with animated attack arcs |
 | **G3** | No geographic/spatial context | IP→geolocation mapping + country heatmap overlay |
 | **G4** | No SOC integration | MITRE ATT&CK mapping + auto-generated `iptables` rules |
 | **G5** | No continuous ingestion | DataStreamer replay engine with synthetic fallback |
-| **G6** | No model interpretability | SHAP TreeExplainer — per-prediction feature importance |
+| **G6** | No model interpretability | SHAP TreeExplainer, per-prediction feature importance |
 
 ---
 
