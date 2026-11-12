@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ ThreatMapX v2.0
+# 🛡️ ThreatMapX
 
 ### Real-Time DDoS Detection & SOC Visualization Platform
 
